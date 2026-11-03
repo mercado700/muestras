@@ -6,6 +6,7 @@
   var UMBRAL_CERCA_M = 20;
   var UMBRAL_PRECISION_M = 15;
   var MIN_PUNTOS = 3;
+  var UMBRAL_MISMO_PUNTO_M = 2;
 
   // ---------- Utilidades ----------
   function nuevoId() {
@@ -279,6 +280,16 @@
     return (nombre ? nombre + ' / ' : '') + 'Muestra ' + m.numero + ' ' + m.cultivo;
   }
 
+  function mayuscula(c) { c = String(c || ''); return c.charAt(0).toUpperCase() + c.slice(1); }
+  function unirY(l) { return l.length < 2 ? l.join('') : l.slice(0, -1).join(', ') + ' y ' + l[l.length - 1]; }
+  // «Adición · 2.5 ha» (adicion puede traer las ha, o ser un texto; si no, las ha de la unidad).
+  function textoAdicion(u) {
+    if (u.adicion == null) return '';
+    var a = u.adicion, ha = typeof a === 'number' ? a : (a && typeof a === 'object' ? (a.ha != null ? a.ha : a.area) : null);
+    if (ha == null || ha === '') ha = u.haCultivo;
+    return 'Adición' + (ha != null && ha !== '' ? ' · ' + ha + ' ha' : (typeof a === 'string' && a ? ' · ' + a : ''));
+  }
+
   var CAMPOS_PRECINTO = [
     ['laboratorio', 'precinto de laboratorio'], ['cu', 'precinto de CU'],
     ['contramuestra', 'precinto de contramuestra']
@@ -337,6 +348,41 @@
         });
         err(u.m, 'el precinto «' + u.valor + '» (' + u.campo + ') está repetido en ' + otros.join('; '));
       });
+    });
+
+    // El mismo punto en dos muestras distintas (<2 m): una muestra se tomó dos veces o se marcó en la equivocada.
+    for (var a = 0; a < visita.muestras.length; a++) {
+      for (var b = a + 1; b < visita.muestras.length; b++) {
+        var ma = visita.muestras[a], mb = visita.muestras[b], hallado = null;
+        ma.puntos.forEach(function (pa) {
+          mb.puntos.forEach(function (pb) {
+            var d = distanciaM(pa, pb);
+            if (d < UMBRAL_MISMO_PUNTO_M && (!hallado || d < hallado.d)) hallado = { d: d, pa: pa, pb: pb };
+          });
+        });
+        if (hallado) avi(ma, 'el punto ' + hallado.pa.n + ' coincide (a ' + hallado.d.toFixed(1) + ' m) con el punto ' + hallado.pb.n + ' de ' + etiquetaMuestra(visita, mb) + ': ¿se marcó dos veces?');
+      }
+    }
+
+    // Cultivos: una muestra de un cultivo que la unidad no trae, y cultivos de la unidad sin muestra.
+    visita.muestras.forEach(function (m) {
+      var u = unidadDeMuestra(visita, m);
+      if (!u || !(u.cultivos || []).length) return;
+      var c = normNombre(m.cultivo);
+      if (!u.cultivos.some(function (x) { return normNombre(x) === c; })) avi(m, 'el cultivo no está entre los de la unidad (' + u.cultivos.map(mayuscula).join(', ') + ')');
+    });
+    visita.unidades.forEach(function (u) {
+      var ms = visita.muestras.filter(function (m) { return claveMuestra(m) === claveUnidad(u); });
+      var cult = u.cultivos || [];
+      var cuando = [u.productor, u.finca].filter(Boolean).join(' · ');
+      if (u.adicion != null && !ms.length) {
+        errores.push({ nivel: 'error', muestraId: null, unidad: claveUnidad(u), texto: [cuando, textoPRD(u)].filter(Boolean).join(' · ') + ': Adición sin muestra: toda adición lleva muestra' });
+      }
+      if (cult.length > 1 && ms.length) {
+        var falta = cult.filter(function (x) { return !ms.some(function (m) { return normNombre(m.cultivo) === normNombre(x); }); });
+        if (falta.length) avisos.push({ nivel: 'aviso', muestraId: null, unidad: claveUnidad(u),
+          texto: [cuando, textoPRD(u)].filter(Boolean).join(' · ') + ': ' + unirY(cult.map(mayuscula)) + ': falta' + (falta.length > 1 ? 'n muestras' : ' muestra') + ' de ' + unirY(falta.map(mayuscula)) });
+      }
     });
 
     var conMuestra = {};
@@ -518,37 +564,41 @@
   // ---------- Traer de Gravi (visitas-de-campo.json, formato gravi-visitas-campo) ----------
   function textoNoVacio(x) { return (typeof x === 'string' || typeof x === 'number') && String(x).trim() !== ''; }
 
-  // Valida el archivo entero: ante cualquier visita o unidad mal formada se rechaza todo, con el motivo.
+  // Errores de formato global rechazan el archivo; una visita mal formada se aparta con su motivo y el resto entra.
+  function motivoVisitaGravi(g, ids) {
+    if (!g || typeof g !== 'object' || !textoNoVacio(g.id)) return 'no trae id';
+    if (ids[g.id]) return 'repite el id «' + g.id + '»';
+    var fin = function (x) { return typeof x === 'number' && isFinite(x); };
+    if (!textoNoVacio(g.expediente)) return 'no trae expediente';
+    var fechas = [g.desde, g.hasta];
+    for (var f = 0; f < 2; f++) if (fechas[f] != null && fechas[f] !== '' && !fechaISOValida(fechas[f])) return 'tiene una fecha inválida: «' + fechas[f] + '»';
+    if (g.numADT != null && typeof g.numADT !== 'string' && typeof g.numADT !== 'number') return 'trae un ADT mal formado';
+    if (!Array.isArray(g.unidades)) return 'no trae la lista de unidades';
+    var claves = {};
+    for (var j = 0; j < g.unidades.length; j++) {
+      var u = g.unidades[j], nu = 'unidad ' + (j + 1) + ': ';
+      if (!u || typeof u !== 'object' || !textoNoVacio(u.clave)) return nu + 'no trae clave';
+      if (claves[u.clave]) return nu + 'repite la clave «' + u.clave + '»';
+      claves[u.clave] = true;
+      if (u.cultivos != null && !Array.isArray(u.cultivos)) return nu + 'cultivos mal formados';
+      if (u.ha != null && !fin(u.ha)) return nu + 'hectáreas inválidas';
+      if (u.coord != null && (typeof u.coord !== 'object' || !fin(u.coord.lat) || !fin(u.coord.lon) || Math.abs(u.coord.lat) > 90 || Math.abs(u.coord.lon) > 180)) return nu + 'coordenada inválida';
+    }
+    return null;
+  }
   function validarGravi(texto) {
     var o;
     try { o = JSON.parse(texto); } catch (e) { return { error: 'El archivo no es un JSON válido.' }; }
     if (!o || o.formato !== 'gravi-visitas-campo') return { error: 'No es un archivo de visitas de Gravi (visitas-de-campo.json).' };
     if (o.version !== 1) return { error: 'Versión del archivo de Gravi no soportada: ' + o.version + '.' };
     if (!Array.isArray(o.visitas)) return { error: 'El archivo de Gravi no trae la lista de visitas.' };
-    var ids = {}, fin = function (x) { return typeof x === 'number' && isFinite(x); };
-    for (var i = 0; i < o.visitas.length; i++) {
-      var g = o.visitas[i], n = 'Archivo rechazado: la visita ' + (i + 1);
-      if (!g || typeof g !== 'object' || !textoNoVacio(g.id)) return { error: n + ' no trae id.' };
-      if (ids[g.id]) return { error: n + ' repite el id «' + g.id + '».' };
-      ids[g.id] = true;
-      if (!textoNoVacio(g.expediente)) return { error: n + ' (' + g.id + ') no trae expediente.' };
-      var fechas = [g.desde, g.hasta];
-      for (var f = 0; f < 2; f++) if (fechas[f] != null && fechas[f] !== '' && !fechaISOValida(fechas[f])) return { error: n + ' (' + g.id + ') tiene una fecha inválida: «' + fechas[f] + '».' };
-      if (g.numADT != null && typeof g.numADT !== 'string' && typeof g.numADT !== 'number') return { error: n + ' (' + g.id + ') trae un ADT mal formado.' };
-      if (!Array.isArray(g.unidades)) return { error: n + ' (' + g.id + ') no trae la lista de unidades.' };
-      var claves = {};
-      for (var j = 0; j < g.unidades.length; j++) {
-        var u = g.unidades[j], nu = n + ' (' + g.id + '), unidad ' + (j + 1);
-        if (!u || typeof u !== 'object' || !textoNoVacio(u.clave)) return { error: nu + ': no trae clave.' };
-        if (claves[u.clave]) return { error: nu + ': repite la clave «' + u.clave + '».' };
-        claves[u.clave] = true;
-        if (u.cultivos != null && !Array.isArray(u.cultivos)) return { error: nu + ': cultivos mal formados.' };
-        if (u.ha != null && !fin(u.ha)) return { error: nu + ': hectáreas inválidas.' };
-        if (u.coord != null && (typeof u.coord !== 'object' || !fin(u.coord.lat) || !fin(u.coord.lon) || Math.abs(u.coord.lat) > 90 || Math.abs(u.coord.lon) > 180))
-          return { error: nu + ': coordenada inválida.' };
-      }
-    }
-    return { gravi: o };
+    var ids = {}, validas = [], rechazadas = [];
+    o.visitas.forEach(function (g, i) {
+      var m = motivoVisitaGravi(g, ids);
+      if (m) { rechazadas.push({ visita: g && textoNoVacio(g.id) ? String(g.id) : 'visita ' + (i + 1), motivo: m }); return; }
+      ids[g.id] = true; validas.push(g);
+    });
+    return { gravi: Object.assign({}, o, { visitas: validas }), rechazadas: rechazadas };
   }
 
   function unidadDeGravi(u) {
@@ -569,6 +619,7 @@
     if (r.nuevas) p.push(plural(r.nuevas, 'visita nueva', 'visitas nuevas'));
     if (r.actualizadas) p.push(plural(r.actualizadas, 'actualizada', 'actualizadas'));
     if (r.iguales) p.push(plural(r.iguales, 'sin cambios', 'sin cambios'));
+    if (r.rechazadas && r.rechazadas.length) p.push(plural(r.rechazadas.length, 'rechazada', 'rechazadas'));
     return p.length ? p.join(', ') : 'El archivo no trae visitas.';
   }
 
@@ -580,7 +631,7 @@
     ahora = ahora || new Date().toISOString();
     var porGravi = {}, ids = {};
     (existentes || []).forEach(function (e) { ids[e.id] = true; if (e.graviId) porGravi[e.graviId] = e; });
-    var res = { nuevas: 0, actualizadas: 0, iguales: 0, unidadesNuevas: 0, unidadesQuitadas: 0, unidadesMarcadas: 0, avisos: [] };
+    var res = { nuevas: 0, actualizadas: 0, iguales: 0, unidadesNuevas: 0, unidadesQuitadas: 0, unidadesMarcadas: 0, avisos: [], rechazadas: val.rechazadas };
     var cambiadas = [];
     val.gravi.visitas.forEach(function (g) {
       var ex = porGravi[g.id], vis, antes = null;
@@ -666,7 +717,7 @@
     UMBRAL_CERCA_M: UMBRAL_CERCA_M, UMBRAL_PRECISION_M: UMBRAL_PRECISION_M, MIN_PUNTOS: MIN_PUNTOS,
     nuevoId: nuevoId, distanciaM: distanciaM, aGMS: aGMS, gmsPar: gmsPar, decimal: decimal,
     fechaDMA: fechaDMA, horaHM: horaHM, aaaammdd: aaaammdd,
-    textoPRD: textoPRD, tieneCodigo: tieneCodigo, nombreUnidad: nombreUnidad, migrarVisita: migrarVisita,
+    textoPRD: textoPRD, textoAdicion: textoAdicion, tieneCodigo: tieneCodigo, nombreUnidad: nombreUnidad, migrarVisita: migrarVisita,
     hoyISO: hoyISO, fechaISOValida: fechaISOValida, isoDMA: isoDMA, sumarDias: sumarDias, etiquetaFecha: etiquetaFecha, agenda: agenda,
     validarGravi: validarGravi, importarGravi: importarGravi, textoResumenGravi: textoResumenGravi, claveUnidad: claveUnidad, claveMuestra: claveMuestra, normCultivo: normCultivo,
     crearUnidadAMano: crearUnidadAMano, numeroSiguiente: numeroSiguiente, cambiarCultivo: cambiarCultivo, borrarMuestra: borrarMuestra, quitarUnidad: quitarUnidad, conciliarUnidades: conciliarUnidades, contarVisita: contarVisita, compararVisitas: compararVisitas, estadoGPS: estadoGPS, teselaSinDatos: teselaSinDatos, GPS_VIEJO_S: GPS_VIEJO_S, crearMuestra: crearMuestra,

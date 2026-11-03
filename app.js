@@ -289,6 +289,7 @@
           x.unidadesNuevas ? h('p', { class: 'suave' }, plural(x.unidadesNuevas, 'unidad nueva', 'unidades nuevas')) : null,
           x.unidadesQuitadas ? h('p', { class: 'suave' }, plural(x.unidadesQuitadas, 'unidad quitada (ya no está en Gravi y no tenía muestras)', 'unidades quitadas (ya no están en Gravi y no tenían muestras)')) : null,
           x.unidadesMarcadas ? h('p', { class: 'alerta' }, plural(x.unidadesMarcadas, 'unidad con muestras ya no está en Gravi: se conserva y queda marcada', 'unidades con muestras ya no están en Gravi: se conservan y quedan marcadas')) : null,
+          x.rechazadas.length ? [h('p', { class: 'alerta' }, plural(x.rechazadas.length, 'visita rechazada', 'visitas rechazadas') + ':'), x.rechazadas.map(function (q) { return h('p', { class: 'chico' }, q.visita + ': ' + q.motivo); })] : null,
           x.avisos.map(function (t) { return h('p', { class: 'alerta' }, t); }),
           h('div', { class: 'acciones' }, boton('Aceptar', function () { cerrar(); }, 'primario'))]);
       });
@@ -389,6 +390,7 @@
     return h('div', { class: 'tarjeta unidad' },
       h('div', { class: 'cab' },
         h('div', { class: 'fila sep', style: 'align-items:flex-start' }, h('div', { class: 'crece' }, identidad(u, true)), h('span', { class: est.clase }, est.texto)),
+        u.adicion != null ? h('div', { class: 'suave chico' }, N.textoAdicion(u)) : null,
         u.yaNoEstaEnGravi ? h('div', { class: 'alerta' }, '⚠ Ya no está en Gravi (tiene muestras: se conserva)') : null,
         repetido ? h('div', { class: 'alerta' }, '⚠ Mismo nombre de ' + repetido.join(' y ') + ' que otra unidad: confirma por código de campo') : null,
         null),
@@ -415,14 +417,20 @@
       guardar().then(function () { ir('#/v/' + visita.id + '/m/' + m.id); });
     }
     if (u.cultivos.length === 1) { crear(u.cultivos[0]); return; }
+    function otro() {
+      cerrar();
+      formulario('Cultivo', [{ nombre: 'c', etiqueta: 'Cultivo' }]).then(function (o) {
+        if (!o || !o.c) return;
+        var c = N.normCultivo(o.c);
+        if (u.cultivos.indexOf(c) >= 0) { crear(c); return; }
+        confirmar('«' + o.c + '» no está entre los cultivos de esta unidad' + (u.cultivos.length ? ' (' + u.cultivos.join(', ') + ')' : '') + '. ¿Crear la muestra igual?', 'Crear igual').then(function (si) {
+          if (si) { u.cultivos.push(c); crear(c); }
+        });
+      });
+    }
     var cerrar = modal([h('h2', { style: 'margin-top:0' }, u.cultivos.length ? 'Cultivo de la muestra' : 'Esta unidad no trae cultivo'),
       u.cultivos.map(function (c) { return boton(c, function () { cerrar(); crear(c); }, '', { style: 'width:100%;margin:6px 0' }); }),
-      u.cultivos.length ? null : boton('Escribir el cultivo', function () {
-        cerrar();
-        formulario('Cultivo', [{ nombre: 'c', etiqueta: 'Cultivo' }]).then(function (o) {
-          if (o && o.c) { if (u.cultivos.indexOf(N.normCultivo(o.c)) < 0) u.cultivos.push(N.normCultivo(o.c)); crear(o.c); }
-        });
-      }, 'primario', { style: 'width:100%' })]);
+      boton(u.cultivos.length ? 'Otro…' : 'Escribir el cultivo', otro, u.cultivos.length ? '' : 'primario', { style: 'width:100%;margin:6px 0' })]);
   }
   function agregarUnidadAMano() {
     formulario('Unidad a mano', [{ nombre: 'productor', etiqueta: 'Productor' }, { nombre: 'finca', etiqueta: 'Finca' },

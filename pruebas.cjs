@@ -18,12 +18,13 @@ const pt = (n, pos, precision = 5) => ({ n, lat: pos.lat, lon: pos.lon, alt: 10,
 function visitaBase() {
   const v = N.nuevaVisita('900110', 'ASOCIACIÓN X'); v.adt = '700001';
   v.unidades.push({ clave: 'F01|A1|C1|7', hoja: 'F01', filaExcel: 7, prd: '100017', prdVarios: [], prdHoja: '', codAgricultor: 'A1', codCampo: 'C1', productor: 'Juan Pérez', finca: 'La Gloria', cultivos: ['banano'], haCultivo: 5, haTotal: 5, bufferHa: 0, origen: 'lista' });
-  v.unidades.push({ clave: 'F01|A2|C2|8', hoja: 'F01', filaExcel: 8, prd: '100017', prdVarios: [], prdHoja: '', codAgricultor: 'A2', codCampo: 'C2', productor: 'Ana Mora', finca: 'El Rosal', cultivos: ['banano', 'plátano'], haCultivo: 3, haTotal: 3, bufferHa: 0, origen: 'lista' });
+  v.unidades.push({ clave: 'F01|A2|C2|8', hoja: 'F01', filaExcel: 8, prd: '100017', prdVarios: [], prdHoja: '', codAgricultor: 'A2', codCampo: 'C2', productor: 'Ana Mora', finca: 'El Rosal', cultivos: ['banano'], haCultivo: 3, haTotal: 3, bufferHa: 0, origen: 'lista' });
   return v;
 }
 function muestraCompleta(v, u, cultivo, pre) {
   const m = N.crearMuestra(v, u, cultivo);
-  m.puntos = [pt(1, A), pt(2, este(A, 300)), pt(3, este(A, 600))];
+  const base = { lat: A.lat + 0.01 * v.muestras.length, lon: A.lon }; // cada muestra en su sitio: el mismo punto en dos muestras es aviso
+  m.puntos = [pt(1, base), pt(2, este(base, 300)), pt(3, este(base, 600))];
   Object.assign(m.precintos, pre);
   v.muestras.push(m);
   return m;
@@ -499,26 +500,86 @@ prueba('Gravi: grupo, una unidad por socio con la misma clave de PRD', () => {
   assert.strictEqual(v.unidades.length, 2); assert.strictEqual(v.unidades[1].productor, 'Socio Dos');
   assert.strictEqual(N.nombreUnidad(v.unidades[1]), 'Socio Dos');
 });
-prueba('Gravi: rechaza con mensaje claro lo que no es del formato', () => {
+prueba('Gravi: formato global mal formado rechaza todo, con mensaje claro', () => {
   const casos = [
     ['no json', /JSON válido/], ['{"formato":"muestras-campo"}', /visitas de Gravi/],
-    [jg(Object.assign(FUENTE(), { version: 2 })), /Versión.*no soportada/], [jg(Object.assign(FUENTE(), { visitas: null })), /lista de visitas/],
-    [jg((() => { const f = FUENTE(); delete f.visitas[0].id; return f; })()), /visita 1 no trae id/],
-    [jg((() => { const f = FUENTE(); f.visitas.push(f.visitas[0]); return f; })()), /repite el id/],
-    [jg((() => { const f = FUENTE(); f.visitas[0].expediente = ''; return f; })()), /no trae expediente/],
-    [jg((() => { const f = FUENTE(); f.visitas[0].desde = '5/11/2026'; return f; })()), /fecha inválida/],
-    [jg((() => { const f = FUENTE(); f.visitas[0].unidades = {}; return f; })()), /lista de unidades/],
-    [jg((() => { const f = FUENTE(); delete f.visitas[0].unidades[0].clave; return f; })()), /no trae clave/],
-    [jg((() => { const f = FUENTE(); f.visitas[0].unidades.push(f.visitas[0].unidades[0]); return f; })()), /repite la clave/],
-    [jg((() => { const f = FUENTE(); f.visitas[0].unidades[0].coord = { lat: 'x', lon: 1 }; return f; })()), /coordenada inválida/]
+    [jg(Object.assign(FUENTE(), { version: 2 })), /Versión.*no soportada/], [jg(Object.assign(FUENTE(), { visitas: null })), /lista de visitas/]
   ];
   casos.forEach(([t, re]) => { const r = N.importarGravi(t, []); assert.match(r.error || '', re, t.slice(0, 60)); assert.ok(!r.visitas); });
   assert.ok(!N.importarGravi(jg(FUENTE()), []).error);
+});
+prueba('Gravi: una visita inválida se aparta con su motivo y las válidas entran', () => {
+  const malas = [
+    [f => { delete f.visitas[1].id; }, /no trae id/],
+    [f => { f.visitas[1].id = f.visitas[0].id; }, /repite el id/],
+    [f => { f.visitas[1].expediente = ''; }, /no trae expediente/],
+    [f => { f.visitas[1].desde = '5/11/2026'; }, /fecha inválida/],
+    [f => { f.visitas[1].unidades = {}; }, /lista de unidades/],
+    [f => { delete f.visitas[1].unidades[0].clave; }, /no trae clave/],
+    [f => { f.visitas[1].unidades.push(f.visitas[1].unidades[0]); }, /repite la clave/],
+    [f => { f.visitas[1].unidades[0].coord = { lat: 'x', lon: 1 }; }, /coordenada inválida/]
+  ];
+  malas.forEach(([romper, re]) => {
+    const f = FUENTE(); f.visitas.push(Object.assign(JSON.parse(JSON.stringify(f.visitas[0])), { id: '900199/general', expediente: '900199' }));
+    romper(f);
+    const r = N.importarGravi(jg(f), []);
+    assert.ok(!r.error); assert.strictEqual(r.visitas.length, 1); assert.strictEqual(r.visitas[0].graviId, '900173/general');
+    assert.strictEqual(r.resumen.rechazadas.length, 1); assert.match(r.resumen.rechazadas[0].motivo, re);
+    assert.strictEqual(r.texto, '1 visita nueva, 1 rechazada');
+  });
+  const f = FUENTE(); f.visitas[0].unidades.push(f.visitas[0].unidades[0]);
+  const r = N.importarGravi(jg(f), []); assert.strictEqual(r.visitas.length, 0); assert.match(r.resumen.rechazadas[0].visita, /900173/);
 });
 prueba('Gravi: identidad por clave, no por nombre; unidades de Gravi sin código se marcan', () => {
   const f = FUENTE(); f.visitas[0].unidades[0].codigo = '';
   const u = N.importarGravi(jg(f), []).visitas[0].unidades[0];
   assert.ok(!N.tieneCodigo(u)); assert.strictEqual(N.textoPRD(u), 'sin código PRD');
+});
+
+console.log('Revisar: adición, cultivos y puntos repetidos');
+const unG = (clave, cultivos, adicion, extra) => Object.assign({ clave, codigo: clave, productor: '', finca: 'Finca ' + clave, hoja: 'F-01', cultivos, origen: 'gravi', adicion: adicion === undefined ? null : adicion }, extra || {});
+const visG = (...us) => { const v = N.nuevaVisita('900173', 'Cliente Ejemplo'); v.adt = '1'; v.unidades.push(...us); return v; };
+const ok2 = { laboratorio: 'L', cu: 'C' };
+prueba('error: adición sin muestra; con muestra, no; adicion null no cuenta', () => {
+  const v = visG(unG('PRD 100974', ['banano'], { ha: 2.5 }), unG('PRD 100975', ['banano'], null));
+  let e = N.revisar(v).errores.filter(x => /Adición sin muestra: toda adición lleva muestra/.test(x.texto));
+  assert.strictEqual(e.length, 1); assert.match(e[0].texto, /PRD 100974/); assert.strictEqual(e[0].muestraId, null);
+  muestraCompleta(v, v.unidades[0], 'banano', Object.assign({}, ok2, { laboratorio: 'L9' }));
+  assert.strictEqual(N.revisar(v).errores.filter(x => /Adición sin muestra/.test(x.texto)).length, 0);
+});
+prueba('aviso: varios cultivos y falta muestra de alguno', () => {
+  const v = visG(unG('PRD 100974', ['banano', 'plátano']));
+  assert.strictEqual(N.revisar(v).avisos.filter(a => /falta muestra/.test(a.texto)).length, 0); // sin ninguna muestra ya avisa otra línea
+  muestraCompleta(v, v.unidades[0], 'banano', ok2);
+  const a = N.revisar(v).avisos.filter(x => /falta/.test(x.texto));
+  assert.strictEqual(a.length, 1); assert.match(a[0].texto, /Banano y Plátano: falta muestra de Plátano/);
+  muestraCompleta(v, v.unidades[0], 'Plátano', { laboratorio: 'L2', cu: 'C2' });
+  assert.strictEqual(N.revisar(v).avisos.filter(x => /falta/.test(x.texto)).length, 0);
+});
+prueba('aviso: cultivo de la muestra que la unidad no trae (sin tildes ni mayúsculas); sin cultivos en la unidad no avisa', () => {
+  const v = visG(unG('PRD 100974', ['Plátano']), unG('PRD 100975', []));
+  muestraCompleta(v, v.unidades[0], 'platano', ok2);
+  muestraCompleta(v, v.unidades[1], 'cacao', { laboratorio: 'L2', cu: 'C2' });
+  assert.strictEqual(N.revisar(v).avisos.filter(a => /no está entre los de la unidad/.test(a.texto)).length, 0);
+  muestraCompleta(v, v.unidades[0], 'cacao', { laboratorio: 'L3', cu: 'C3' });
+  const a = N.revisar(v).avisos.filter(x => /no está entre los de la unidad/.test(x.texto));
+  assert.strictEqual(a.length, 1); assert.match(a[0].texto, /Muestra 1 cacao/);
+});
+prueba('aviso: el mismo punto (<2 m) en dos muestras distintas; 5 m no', () => {
+  const v = visG(unG('PRD 100974', ['banano']), unG('PRD 100975', ['banano']));
+  const a = muestraCompleta(v, v.unidades[0], 'banano', ok2), b = muestraCompleta(v, v.unidades[1], 'banano', { laboratorio: 'L2', cu: 'C2' });
+  assert.strictEqual(N.revisar(v).avisos.filter(x => /coincide/.test(x.texto)).length, 0);
+  b.puntos[1] = pt(2, este(a.puntos[1], 1.5));
+  const av = N.revisar(v).avisos.filter(x => /coincide/.test(x.texto));
+  assert.strictEqual(av.length, 1); assert.match(av[0].texto, /punto 2 coincide.*punto 2 de/); assert.strictEqual(av[0].muestraId, a.id);
+  b.puntos[1] = pt(2, este(a.puntos[1], 5));
+  assert.strictEqual(N.revisar(v).avisos.filter(x => /coincide/.test(x.texto)).length, 0);
+});
+prueba('adición: texto «Adición · X ha» con ha en la adición o, si no, las de la unidad', () => {
+  assert.strictEqual(N.textoAdicion(unG('a', [], { ha: 2.5 })), 'Adición · 2.5 ha');
+  assert.strictEqual(N.textoAdicion(unG('a', [], 3)), 'Adición · 3 ha');
+  assert.strictEqual(N.textoAdicion(unG('a', [], { periodo: 'x' }, { haCultivo: 4 })), 'Adición · 4 ha');
+  assert.strictEqual(N.textoAdicion(unG('a', [], null)), '');
 });
 
 console.log('Teselas');

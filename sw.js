@@ -1,5 +1,5 @@
 // Service worker: precache del shell y cache-first. Sube VERSION al cambiar cualquier archivo.
-const VERSION = 'muestras-campo-v4';
+const VERSION = 'muestras-campo-v5';
 const SHELL = [
   './', 'index.html', 'app.js', 'nucleo.js', 'lista.js', 'estilos.css', 'manifest.webmanifest',
   'icono-192.png', 'icono-512.png', 'icono-maskable-512.png', 'apple-touch-icon.png',
