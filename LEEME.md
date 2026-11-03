@@ -25,24 +25,31 @@ Si se cambia cualquier archivo, subir la constante `VERSION` de `sw.js` para que
 
 Crear el repositorio `muestras` en la cuenta `mercado700`, subir el contenido de esta carpeta (rama `main`) y en Settings, Pages, elegir «Deploy from a branch», `main`, `/ (root)`. Queda en `https://mercado700.github.io/muestras/`. Todo usa rutas relativas.
 
-## Formato del archivo exportado (`muestras-<expediente>-<aaaammdd>.json`)
+## Traer de Gravi
+
+En el inicio, «Traer de Gravi» lee `visitas-de-campo.json` (formato `gravi-visitas-campo`, lo escribe Gravi en `iCloud Drive/Gravi/Campo/`). Crea o actualiza visitas por `id` (`origen: "gravi"`, `graviId`): agrega unidades nuevas y actualiza los datos de las existentes (por `clave`), pero **nunca** toca muestras, puntos ni precintos. Una unidad que Gravi ya no trae se quita si no tiene muestras; si las tiene, se conserva marcada «ya no está en Gravi». Un ADT ya escrito en el teléfono no se pisa. Un archivo mal formado se rechaza entero, con el motivo. Al terminar enseña el resumen («3 visitas nuevas, 1 actualizada»). El inicio es la agenda: próximas por fecha de visita (Hoy, Mañana, dd/mm/aaaa o rango), luego pasadas y sin fecha.
+
+El **ADT es uno por visita** (`visita.adt`): viene de Gravi (`numADT`) o se teclea una vez arriba en la pantalla de la visita. Las visitas guardadas antes (y los archivos v1) se migran al abrirlas: si todas las muestras comparten ADT, pasa a la visita; si difieren, se toma el más repetido y «Revisar» avisa «Había ADT distintos por muestra: …». «Revisar» da error si falta el ADT de la visita.
+
+## Formato del archivo exportado (`muestras-<expediente>-<aaaammdd>.json`), versión 2
 
 ```json
-{ "formato": "muestras-campo", "version": 1,
-  "visita": { "id": "uuid", "expediente": "900110", "cliente": "…", "creada": "ISO",
-    "unidades": [ { "clave": "hoja|codAgricultor|codCampo|filaExcel", "hoja": "F01", "filaExcel": 5,
-        "prd": "100017", "prdVarios": [], "prdHoja": "", "codAgricultor": "A1", "codCampo": "C1",
-        "productor": "…", "finca": "…", "cultivos": ["banano"], "haCultivo": 4, "haTotal": 5,
-        "bufferHa": 0, "coord": {"lat": -3.2, "lon": -79.9}, "origen": "lista|a_mano" } ],
+{ "formato": "muestras-campo", "version": 2,
+  "visita": { "id": "uuid", "origen": "gravi|a_mano", "graviId": "900173/general", "adt": "700001",
+    "expediente": "900173", "cliente": "…", "creada": "ISO",
+    "unidades": [ { "clave": "PRD 100974", "codigo": "PRD 100974", "productor": "", "finca": "Finca Ejemplo",
+        "hoja": "F-01", "cultivos": ["banano"], "origen": "gravi|lista|a_mano" } ],
     "muestras": [ { "id": "uuid", "clave": "<clave de la unidad>", "cultivo": "banano", "numero": 1,
         "puntos": [ { "n": 1, "lat": -3.2578, "lon": -79.9541, "alt": 12, "precision": 6, "hora": "ISO" } ],
-        "precintos": { "laboratorio": "", "cu": "", "contramuestra": "NA", "adt": "" }, "nota": "" } ] } }
+        "precintos": { "laboratorio": "", "cu": "", "contramuestra": "NA" }, "nota": "" } ] } }
 ```
 
-- La unidad se identifica por `clave`, no por nombre ni por PRD: la Lista trae el PRD por hoja (`prd` es `null` si la hoja no tiene o tiene varios; en ese caso `prdVarios` o `prdHoja` dicen qué había). Las unidades a mano llevan `clave` `a_mano|uuid` y no tienen PRD.
+- `graviId` solo existe en visitas de Gravi. En grupo, cada unidad lleva el `productor` y la `finca` del socio y el `codigo` del grupo; las unidades de la Lista llevan además `prd`, `hoja`, `codCampo`, etc.
+- La unidad se identifica por `clave`, no por nombre ni por PRD: la Lista trae el PRD por hoja (`prd` es `null` si la hoja no tiene o tiene varios). Las unidades a mano llevan `clave` `a_mano|uuid` y no tienen código.
+- El ADT va una sola vez, en la visita; las muestras ya no lo llevan. Importar sigue aceptando la versión 1 (el ADT de las muestras se migra a la visita).
 - `coord` es opcional y solo sirve para centrar el mapa; no es la ubicación de la finca. Cédulas: nunca se leen ni se guardan.
 - No hay campo para el resultado del laboratorio.
-- Además: CSV de puntos (`;` separador, punto decimal) y resumen en texto para Notas/WhatsApp.
+- Además: CSV de puntos (`;` separador, punto decimal; el ADT va en la columna `adt`) y resumen en texto para Notas/WhatsApp (el ADT sale una vez en la cabecera).
 
 ## Archivos
 

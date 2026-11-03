@@ -16,7 +16,7 @@ const A = { lat: -3.2578, lon: -79.9541 };
 const pt = (n, pos, precision = 5) => ({ n, lat: pos.lat, lon: pos.lon, alt: 10, precision, hora: '2026-11-03T14:05:00.000Z' });
 
 function visitaBase() {
-  const v = N.nuevaVisita('900110', 'ASOCIACIÓN X');
+  const v = N.nuevaVisita('900110', 'ASOCIACIÓN X'); v.adt = '700001';
   v.unidades.push({ clave: 'F01|A1|C1|7', hoja: 'F01', filaExcel: 7, prd: '100017', prdVarios: [], prdHoja: '', codAgricultor: 'A1', codCampo: 'C1', productor: 'Juan Pérez', finca: 'La Gloria', cultivos: ['banano'], haCultivo: 5, haTotal: 5, bufferHa: 0, origen: 'lista' });
   v.unidades.push({ clave: 'F01|A2|C2|8', hoja: 'F01', filaExcel: 8, prd: '100017', prdVarios: [], prdHoja: '', codAgricultor: 'A2', codCampo: 'C2', productor: 'Ana Mora', finca: 'El Rosal', cultivos: ['banano', 'plátano'], haCultivo: 3, haTotal: 3, bufferHa: 0, origen: 'lista' });
   return v;
@@ -87,36 +87,46 @@ prueba('nombres repetidos se alertan', () => {
 console.log('Revisar antes de salir');
 prueba('muestra completa: sin errores ni avisos', () => {
   const v = visitaBase();
-  muestraCompleta(v, v.unidades[0], 'banano', { laboratorio: 'L1', cu: 'C1', adt: '123' });
-  muestraCompleta(v, v.unidades[1], 'banano', { laboratorio: 'L2', cu: 'C2', adt: '124' });
+  muestraCompleta(v, v.unidades[0], 'banano', { laboratorio: 'L1', cu: 'C1' });
+  muestraCompleta(v, v.unidades[1], 'banano', { laboratorio: 'L2', cu: 'C2' });
   const r = N.revisar(v);
   assert.deepStrictEqual(r.errores, []);
   assert.deepStrictEqual(r.avisos, []);
 });
 prueba('error: menos de 3 puntos', () => {
   const v = visitaBase();
-  const m = muestraCompleta(v, v.unidades[0], 'banano', { laboratorio: 'L1', cu: 'C1', adt: '1' });
+  const m = muestraCompleta(v, v.unidades[0], 'banano', { laboratorio: 'L1', cu: 'C1' });
   m.puntos.pop();
   const r = N.revisar(v);
   assert.strictEqual(r.errores.length, 1);
   assert.match(r.errores[0].texto, /2 puntos/);
   assert.strictEqual(r.errores[0].muestraId, m.id);
 });
-prueba('error: falta laboratorio, CU y ADT', () => {
+prueba('error: falta laboratorio y CU', () => {
   const v = visitaBase();
   muestraCompleta(v, v.unidades[0], 'banano', {});
   const t = N.revisar(v).errores.map(e => e.texto).join('|');
-  assert.match(t, /laboratorio/); assert.match(t, /CU/); assert.match(t, /ADT/);
+  assert.match(t, /laboratorio/); assert.match(t, /CU/); assert.doesNotMatch(t, /ADT/);
+});
+prueba('error: falta el ADT de la visita (una sola vez, lleva a la visita)', () => {
+  const v = visitaBase(); v.adt = '  ';
+  muestraCompleta(v, v.unidades[0], 'banano', { laboratorio: 'L1', cu: 'C1' });
+  muestraCompleta(v, v.unidades[1], 'banano', { laboratorio: 'L2', cu: 'C2' });
+  const e = N.revisar(v).errores;
+  assert.strictEqual(e.length, 1);
+  assert.match(e[0].texto, /Falta el ADT de la visita/); assert.strictEqual(e[0].muestraId, null);
+  v.adt = '55';
+  assert.deepStrictEqual(N.revisar(v).errores, []);
 });
 prueba('error: «NA» en laboratorio o CU no cuenta como precinto', () => {
   const v = visitaBase();
-  muestraCompleta(v, v.unidades[0], 'banano', { laboratorio: 'na', cu: ' NA ', adt: '1' });
+  muestraCompleta(v, v.unidades[0], 'banano', { laboratorio: 'na', cu: ' NA ' });
   assert.strictEqual(N.revisar(v).errores.length, 2);
 });
 prueba('error: mismo precinto en dos muestras (espacios y mayúsculas)', () => {
   const v = visitaBase();
-  const a = muestraCompleta(v, v.unidades[0], 'banano', { laboratorio: 'ab 123', cu: 'C1', adt: '1' });
-  const b = muestraCompleta(v, v.unidades[1], 'banano', { laboratorio: 'L2', cu: 'AB123', adt: '2' });
+  const a = muestraCompleta(v, v.unidades[0], 'banano', { laboratorio: 'ab 123', cu: 'C1' });
+  const b = muestraCompleta(v, v.unidades[1], 'banano', { laboratorio: 'L2', cu: 'AB123' });
   const e = N.revisar(v).errores;
   assert.strictEqual(e.length, 2);
   assert.deepStrictEqual(e.map(x => x.muestraId).sort(), [a.id, b.id].sort());
@@ -124,20 +134,20 @@ prueba('error: mismo precinto en dos muestras (espacios y mayúsculas)', () => {
 });
 prueba('error: mismo precinto en dos campos de la misma muestra', () => {
   const v = visitaBase();
-  muestraCompleta(v, v.unidades[0], 'banano', { laboratorio: 'X9', cu: 'X9', adt: '1' });
+  muestraCompleta(v, v.unidades[0], 'banano', { laboratorio: 'X9', cu: 'X9' });
   assert.ok(N.revisar(v).errores.some(e => /repetido/.test(e.texto)));
 });
 prueba('contramuestra NA repetida NO es duplicado', () => {
   const v = visitaBase();
-  muestraCompleta(v, v.unidades[0], 'banano', { laboratorio: 'L1', cu: 'C1', adt: '1' });
-  muestraCompleta(v, v.unidades[1], 'banano', { laboratorio: 'L2', cu: 'C2', adt: '2' });
+  muestraCompleta(v, v.unidades[0], 'banano', { laboratorio: 'L1', cu: 'C1' });
+  muestraCompleta(v, v.unidades[1], 'banano', { laboratorio: 'L2', cu: 'C2' });
   assert.deepStrictEqual(N.revisar(v).errores, []);
 });
 prueba('aviso: dos puntos a <20 m', () => {
   const v = visitaBase();
-  const m = muestraCompleta(v, v.unidades[0], 'banano', { laboratorio: 'L1', cu: 'C1', adt: '1' });
+  const m = muestraCompleta(v, v.unidades[0], 'banano', { laboratorio: 'L1', cu: 'C1' });
   m.puntos[1] = pt(2, este(A, 12));
-  muestraCompleta(v, v.unidades[1], 'banano', { laboratorio: 'L2', cu: 'C2', adt: '2' });
+  muestraCompleta(v, v.unidades[1], 'banano', { laboratorio: 'L2', cu: 'C2' });
   const r = N.revisar(v);
   assert.deepStrictEqual(r.errores, []);
   assert.strictEqual(r.avisos.length, 1);
@@ -145,16 +155,16 @@ prueba('aviso: dos puntos a <20 m', () => {
 });
 prueba('aviso: precisión >15 m', () => {
   const v = visitaBase();
-  const m = muestraCompleta(v, v.unidades[0], 'banano', { laboratorio: 'L1', cu: 'C1', adt: '1' });
+  const m = muestraCompleta(v, v.unidades[0], 'banano', { laboratorio: 'L1', cu: 'C1' });
   m.puntos[2].precision = 32;
-  muestraCompleta(v, v.unidades[1], 'banano', { laboratorio: 'L2', cu: 'C2', adt: '2' });
+  muestraCompleta(v, v.unidades[1], 'banano', { laboratorio: 'L2', cu: 'C2' });
   const r = N.revisar(v);
   assert.strictEqual(r.avisos.length, 1);
   assert.match(r.avisos[0].texto, /punto 3.*±32/);
 });
 prueba('aviso: unidad sin muestra', () => {
   const v = visitaBase();
-  muestraCompleta(v, v.unidades[0], 'banano', { laboratorio: 'L1', cu: 'C1', adt: '1' });
+  muestraCompleta(v, v.unidades[0], 'banano', { laboratorio: 'L1', cu: 'C1' });
   const r = N.revisar(v);
   assert.strictEqual(r.avisos.length, 1);
   assert.match(r.avisos[0].texto, /Ana Mora.*PRD 100017.*ninguna muestra/);
@@ -168,10 +178,10 @@ prueba('resumen de visita: 1/2 con muestra', () => {
 
 prueba('avance: unidades, con muestra y completas', () => {
   const v = visitaBase();
-  muestraCompleta(v, v.unidades[0], 'banano', { laboratorio: 'L1', cu: 'C1', adt: '1' });
-  const m2 = muestraCompleta(v, v.unidades[1], 'banano', { laboratorio: 'L2', cu: 'C2', adt: '' });
+  muestraCompleta(v, v.unidades[0], 'banano', { laboratorio: 'L1', cu: 'C1' });
+  const m2 = muestraCompleta(v, v.unidades[1], 'banano', { laboratorio: 'L2', cu: '' });
   assert.deepStrictEqual(N.avance(v), { unidades: 2, conMuestra: 2, completas: 1 });
-  m2.precintos.adt = '2'; m2.puntos.pop();
+  m2.precintos.cu = 'C2'; m2.puntos.pop();
   assert.strictEqual(N.avance(v).completas, 1);
 });
 
@@ -219,19 +229,19 @@ prueba('revisar: visita sin muestras lo marca', () => {
   muestraCompleta(v, v.unidades[0], 'banano', {});
   assert.strictEqual(N.revisar(v).sinMuestras, false);
 });
-prueba('ADT repetido es aviso; el precinto de laboratorio repetido sigue siendo error', () => {
+prueba('el ADT ya no se compara entre muestras; el precinto de laboratorio repetido sigue siendo error', () => {
   const v = visitaBase();
-  muestraCompleta(v, v.unidades[0], 'banano', { laboratorio: 'L1', cu: 'C1', adt: '77' });
-  muestraCompleta(v, v.unidades[1], 'banano', { laboratorio: 'L2', cu: 'C2', adt: '77' });
-  let r = N.revisar(v);
+  muestraCompleta(v, v.unidades[0], 'banano', { laboratorio: 'L1', cu: 'C1' });
+  muestraCompleta(v, v.unidades[1], 'banano', { laboratorio: 'L2', cu: 'C2' });
+  const r = N.revisar(v);
   assert.deepStrictEqual(r.errores, []);
-  assert.strictEqual(r.avisos.filter(a => /ADT repetido/.test(a.texto) && /misma remesa/.test(a.texto)).length, 2);
+  assert.strictEqual(r.avisos.filter(a => /ADT/.test(a.texto)).length, 0);
   v.muestras[1].precintos.laboratorio = 'L1';
   assert.ok(N.revisar(v).errores.some(e => /repetido/.test(e.texto)));
 });
 prueba('contramuestra vacía es aviso; NA no', () => {
   const v = visitaBase();
-  const m = muestraCompleta(v, v.unidades[0], 'banano', { laboratorio: 'L1', cu: 'C1', adt: '1' });
+  const m = muestraCompleta(v, v.unidades[0], 'banano', { laboratorio: 'L1', cu: 'C1' });
   assert.deepStrictEqual(N.revisar(v).avisos.filter(a => /contramuestra/.test(a.texto)), []);
   m.precintos.contramuestra = ' ';
   assert.strictEqual(N.revisar(v).avisos.filter(a => /escribe NA/.test(a.texto)).length, 1);
@@ -291,15 +301,17 @@ console.log('Exportación');
 prueba('nombre de archivo', () => assert.strictEqual(N.nombreArchivo({ expediente: '900110' }, 'json', new Date(2026, 10, 3)), 'muestras-900110-20261103.json'));
 prueba('JSON: ida y vuelta', () => {
   const v = visitaBase();
-  muestraCompleta(v, v.unidades[0], 'banano', { laboratorio: 'L1', cu: 'C1', adt: '1' });
+  muestraCompleta(v, v.unidades[0], 'banano', { laboratorio: 'L1', cu: 'C1' });
   const o = JSON.parse(N.aJSON(v));
-  assert.strictEqual(o.formato, 'muestras-campo'); assert.strictEqual(o.version, 1);
-  assert.deepStrictEqual(N.leerArchivo(N.aJSON(v)).visita, v);
+  assert.strictEqual(o.formato, 'muestras-campo'); assert.strictEqual(o.version, 2);
+  const esperada = JSON.parse(JSON.stringify(v)); esperada.unidades.forEach(u => { u.codigo = 'PRD ' + u.prd; });
+  assert.deepStrictEqual(N.leerArchivo(N.aJSON(v)).visita, esperada);
 });
 prueba('importar: rechaza lo que no es del formato', () => {
   assert.ok(N.leerArchivo('no json').error);
   assert.ok(N.leerArchivo('{"formato":"otro"}').error);
-  assert.ok(N.leerArchivo('{"formato":"muestras-campo","version":2,"visita":{}}').error);
+  assert.ok(N.leerArchivo('{"formato":"muestras-campo","version":3,"visita":{}}').error);
+  assert.match(N.leerArchivo('{"formato":"muestras-campo","version":2,"visita":{}}').error, /visita completa/);
 });
 prueba('CSV: separador «;», punto decimal, escapado', () => {
   const v = visitaBase();
@@ -307,16 +319,206 @@ prueba('CSV: separador «;», punto decimal, escapado', () => {
   muestraCompleta(v, v.unidades[0], 'banano', {});
   const filas = N.csvPuntos(v).trim().split('\r\n');
   assert.strictEqual(filas.length, 4);
-  assert.strictEqual(filas[0], 'expediente;cliente;prd;cod_campo;productor;finca;cultivo;muestra;punto;lat;lon;alt;precision;hora');
-  assert.ok(filas[1].startsWith('900110;"Coop; ""Sur""";100017;C1;Juan Pérez;La Gloria;banano;1;1;-3.257800;-79.954100;10;5;'));
+  assert.strictEqual(filas[0], 'expediente;cliente;adt;prd;cod_campo;productor;finca;cultivo;muestra;punto;lat;lon;alt;precision;hora');
+  assert.ok(filas[1].startsWith('900110;"Coop; ""Sur""";700001;100017;C1;Juan Pérez;La Gloria;banano;1;1;-3.257800;-79.954100;10;5;'));
 });
 prueba('resumen de texto: código, GMS, enlace y precintos', () => {
   const v = visitaBase();
-  muestraCompleta(v, v.unidades[0], 'banano', { laboratorio: 'L1', cu: 'C1', adt: '77' });
+  muestraCompleta(v, v.unidades[0], 'banano', { laboratorio: 'L1', cu: 'C1' });
   const t = N.resumenTexto(v);
   assert.match(t, /PRD 100017/); assert.match(t, /campo C1/); assert.match(t, /3°15'28\.1"S 79°57'14\.8"W/);
   assert.match(t, /https:\/\/maps\.apple\.com\/\?ll=-3\.257800,-79\.954100/);
-  assert.match(t, /Precinto laboratorio: L1/); assert.match(t, /ADT: 77/); assert.match(t, /contramuestra: NA/);
+  assert.match(t, /Precinto laboratorio: L1/); assert.match(t, /ADT: 700001/); assert.strictEqual(t.match(/ADT:/g).length, 1); assert.match(t, /contramuestra: NA/);
+});
+
+console.log('ADT por visita (migración y formato v2)');
+const conAdt = (v, adts) => adts.forEach((a, i) => { const m = muestraCompleta(v, v.unidades[i % 2], 'banano', { laboratorio: 'L' + i, cu: 'C' + i }); m.precintos.adt = a; });
+prueba('migración: ADT igual en todas las muestras pasa a la visita y se quita de ellas', () => {
+  const v = visitaBase(); delete v.adt; conAdt(v, ['77', '77', ' 77 ']);
+  assert.strictEqual(N.migrarVisita(v), true);
+  assert.strictEqual(v.adt, '77'); assert.ok(!v.avisoMigracion);
+  assert.ok(v.muestras.every(m => !('adt' in m.precintos)));
+  assert.strictEqual(N.migrarVisita(v), false); // idempotente
+});
+prueba('migración: muestras con ADT vacío o sin muestras dejan la visita vacía y sin aviso', () => {
+  const v = visitaBase(); delete v.adt; conAdt(v, ['', '']);
+  N.migrarVisita(v);
+  assert.strictEqual(v.adt, ''); assert.ok(!v.avisoMigracion);
+  const w = N.nuevaVisita('1', 'x'); delete w.adt; N.migrarVisita(w); assert.strictEqual(w.adt, '');
+});
+prueba('migración: ADT distintos, gana el más repetido y «Revisar» lo avisa con la lista', () => {
+  const v = visitaBase(); delete v.adt; conAdt(v, ['11', '22', '22', '']);
+  N.migrarVisita(v);
+  assert.strictEqual(v.adt, '22');
+  assert.strictEqual(v.avisoMigracion, 'Había ADT distintos por muestra: 11, 22.');
+  const av = N.revisar(v).avisos.filter(a => /Había ADT distintos por muestra: 11, 22/.test(a.texto));
+  assert.strictEqual(av.length, 1); assert.strictEqual(av[0].muestraId, null);
+  assert.ok(!N.revisar(v).errores.some(e => /ADT/.test(e.texto))); // el ADT elegido cubre el error
+});
+prueba('migración: empate se resuelve por el primero; no pisa un ADT ya puesto en la visita', () => {
+  const v = visitaBase(); delete v.adt; conAdt(v, ['5', '6']);
+  N.migrarVisita(v); assert.strictEqual(v.adt, '5');
+  const w = visitaBase(); w.adt = '900'; conAdt(w, ['5']);
+  N.migrarVisita(w); assert.strictEqual(w.adt, '900'); assert.match(w.avisoMigracion, /5/);
+});
+prueba('importar v1: el ADT de las muestras sube a la visita', () => {
+  const v = visitaBase(); conAdt(v, ['31', '31']);
+  const crudo = JSON.parse(JSON.stringify({ formato: 'muestras-campo', version: 1, visita: v })); delete crudo.visita.adt;
+  const r = N.leerArchivo(JSON.stringify(crudo));
+  assert.strictEqual(r.visita.adt, '31'); assert.ok(r.visita.muestras.every(m => !('adt' in m.precintos)));
+  // v1 que ni siquiera trae `adt` en los precintos
+  delete crudo.visita.muestras[0].precintos.adt; delete crudo.visita.muestras[1].precintos.adt;
+  assert.strictEqual(N.leerArchivo(JSON.stringify(crudo)).visita.adt, '');
+});
+prueba('v2: ADT una vez en la visita, origen, graviId, codigo; las muestras sin ADT', () => {
+  const v = visitaBase(); v.origen = 'gravi'; v.graviId = '900173/general';
+  muestraCompleta(v, v.unidades[0], 'banano', { laboratorio: 'L1', cu: 'C1' });
+  const o = JSON.parse(N.aJSON(v)).visita;
+  assert.strictEqual(o.adt, '700001'); assert.strictEqual(o.origen, 'gravi'); assert.strictEqual(o.graviId, '900173/general');
+  assert.strictEqual(o.unidades[0].codigo, 'PRD 100017');
+  assert.ok(!('adt' in o.muestras[0].precintos));
+  assert.strictEqual(JSON.parse(N.aJSON(visitaBase())).visita.origen, 'a_mano');
+});
+prueba('v2: unidad de Gravi en grupo conserva codigo, productor y finca', () => {
+  const v = N.nuevaVisita('900173', 'Asociación Ejemplo');
+  v.unidades.push({ clave: 'PRD 100974|Socio Uno|Finca Ejemplo', codigo: 'PRD 100974', productor: 'Socio Uno', finca: 'Finca Ejemplo', cultivos: ['banano'], origen: 'gravi' });
+  const u = JSON.parse(N.aJSON(v)).visita.unidades[0];
+  assert.deepStrictEqual([u.codigo, u.productor, u.finca], ['PRD 100974', 'Socio Uno', 'Finca Ejemplo']);
+});
+
+console.log('Agenda');
+const vf = (exp, desde, hasta, extra) => Object.assign(N.nuevaVisita(exp, 'C' + exp), { desde, hasta }, extra || {});
+prueba('fechas ISO: validación, dd/mm/aaaa y sumar días', () => {
+  assert.ok(N.fechaISOValida('2026-11-03')); assert.ok(!N.fechaISOValida('2026-02-30')); assert.ok(!N.fechaISOValida('3/11/2026')); assert.ok(!N.fechaISOValida(null));
+  assert.strictEqual(N.isoDMA('2026-10-23'), '23/10/2026');
+  assert.strictEqual(N.sumarDias('2026-12-31', 1), '2027-01-01');
+  assert.strictEqual(N.hoyISO(new Date(2026, 10, 3, 23, 59)), '2026-11-03');
+});
+prueba('etiqueta: Hoy, Mañana, fecha y rango', () => {
+  const H = '2026-11-03';
+  assert.strictEqual(N.etiquetaFecha(vf('1', H, H), H), 'Hoy');
+  assert.strictEqual(N.etiquetaFecha(vf('1', '2026-11-04', '2026-11-04'), H), 'Mañana');
+  assert.strictEqual(N.etiquetaFecha(vf('1', '2026-11-10', '2026-11-10'), H), '10/11/2026');
+  assert.strictEqual(N.etiquetaFecha(vf('1', '2026-11-10', null), H), '10/11/2026');
+  assert.strictEqual(N.etiquetaFecha(vf('1', '2026-11-10', '2026-11-12'), H), '10/11/2026 – 12/11/2026');
+  assert.strictEqual(N.etiquetaFecha(vf('1', '2026-11-02', '2026-11-04'), H), 'Hoy · 02/11/2026 – 04/11/2026');
+  assert.strictEqual(N.etiquetaFecha(vf('1', null, null), H), '');
+});
+prueba('agenda: próximas por fecha, luego pasadas (reciente primero) y sin fecha', () => {
+  const H = '2026-11-03';
+  const vs = [vf('A', '2026-10-20', '2026-10-20'), vf('B', '2026-11-12', '2026-11-12'), vf('C', null, null, { creada: '2026-01-01T00:00:00Z' }),
+    vf('D', H, H), vf('E', '2026-11-04', '2026-11-04'), vf('F', '2026-10-28', '2026-10-28'), vf('G', null, null, { creada: '2026-05-01T00:00:00Z' }),
+    vf('H', '2026-11-01', '2026-11-03')]; // en curso: termina hoy, sigue en próximas
+  const g = N.agenda(vs, H);
+  assert.deepStrictEqual(g.map(x => x.clave), ['proximas', 'pasadas', 'sin-fecha']);
+  assert.deepStrictEqual(g[0].visitas.map(v => v.expediente), ['H', 'D', 'E', 'B']);
+  assert.deepStrictEqual(g[1].visitas.map(v => v.expediente), ['F', 'A']);
+  assert.deepStrictEqual(g[2].visitas.map(v => v.expediente), ['G', 'C']);
+  assert.deepStrictEqual(N.agenda([], H), []);
+});
+
+console.log('Traer de Gravi');
+const FUENTE = () => ({
+  formato: 'gravi-visitas-campo', version: 1, generado: '2026-11-03T10:00:00Z',
+  visitas: [{
+    id: '900173/general', expediente: '900173', visita: 'general', cliente: 'Finca Ejemplo S.A.', tipo: 'no_anunciada', tipoTexto: 'No anunciada', modo: 'individual',
+    desde: '2026-11-05', hasta: '2026-11-05', numADT: '700001',
+    unidades: [{ clave: 'PRD 100974', codigo: 'PRD 100974', productor: '', finca: 'Finca Ejemplo', hoja: 'F-01', cultivos: ['Banano'], ha: 9.97, estatus: 'organico', adicion: null, coord: null }]
+  }]
+});
+const jg = (o) => JSON.stringify(o);
+prueba('Gravi: visita nueva con sus unidades, ADT y fechas', () => {
+  const r = N.importarGravi(jg(FUENTE()), [], '2026-11-03T12:00:00Z');
+  assert.strictEqual(r.visitas.length, 1); assert.strictEqual(r.texto, '1 visita nueva');
+  const v = r.visitas[0];
+  assert.deepStrictEqual([v.origen, v.graviId, v.adt, v.desde, v.hasta, v.expediente], ['gravi', '900173/general', '700001', '2026-11-05', '2026-11-05', '900173']);
+  assert.ok(/^[A-Za-z0-9_-]+$/.test(v.id)); // sirve en la ruta #/v/<id>
+  assert.deepStrictEqual(v.unidades[0].cultivos, ['banano']); assert.strictEqual(v.unidades[0].haCultivo, 9.97);
+  assert.strictEqual(N.textoPRD(v.unidades[0]), 'PRD 100974'); assert.ok(N.tieneCodigo(v.unidades[0]));
+});
+prueba('Gravi: resumen «3 visitas nuevas, 1 actualizada»', () => {
+  const f = FUENTE(), base = f.visitas[0], ex = N.importarGravi(jg(f), []).visitas;
+  f.visitas = [1, 2, 3].map(i => Object.assign(JSON.parse(JSON.stringify(base)), { id: '90010' + i + '/general', expediente: '90010' + i }));
+  f.visitas.push(Object.assign(JSON.parse(JSON.stringify(base)), { cliente: 'Otro nombre' }));
+  const r = N.importarGravi(jg(f), ex);
+  assert.strictEqual(r.texto, '3 visitas nuevas, 1 actualizada');
+  assert.strictEqual(N.importarGravi(jg(f), r.visitas.concat(ex.map(e => Object.assign({}, e, { cliente: 'Otro nombre' })))).texto, '4 sin cambios');
+});
+prueba('Gravi: actualizar nunca toca muestras, puntos ni precintos', () => {
+  const ex = N.importarGravi(jg(FUENTE()), []).visitas;
+  const v = ex[0], u = v.unidades[0];
+  const m = muestraCompleta(v, u, 'banano', { laboratorio: 'L1', cu: 'C1', contramuestra: 'CM9' }); m.nota = 'seca';
+  const antes = JSON.stringify(v.muestras);
+  const f = FUENTE(); f.visitas[0].unidades[0].finca = 'Finca Ejemplo Renombrada'; f.visitas[0].desde = '2026-11-06'; f.visitas[0].hasta = '2026-11-07';
+  f.visitas[0].unidades.push({ clave: 'PRD 100975', codigo: 'PRD 100975', productor: '', finca: 'Otra', hoja: 'F-02', cultivos: ['cacao'], ha: 2 });
+  const r = N.importarGravi(jg(f), [v]);
+  const w = r.visitas[0];
+  assert.strictEqual(JSON.stringify(w.muestras), antes);
+  assert.strictEqual(r.texto, '1 actualizada');
+  assert.strictEqual(w.unidades.length, 2); assert.strictEqual(w.unidades[0].finca, 'Finca Ejemplo Renombrada'); assert.strictEqual(w.desde, '2026-11-06');
+  assert.strictEqual(w.id, v.id); assert.strictEqual(r.resumen.unidadesNuevas, 1);
+});
+prueba('Gravi: unidad que ya no viene se quita sin muestras y se marca con muestras', () => {
+  const f = FUENTE();
+  f.visitas[0].unidades.push({ clave: 'PRD 100975', codigo: 'PRD 100975', finca: 'Otra', cultivos: ['cacao'] }, { clave: 'PRD 100976', codigo: 'PRD 100976', finca: 'Tercera', cultivos: ['cacao'] });
+  const v = N.importarGravi(jg(f), []).visitas[0];
+  muestraCompleta(v, v.unidades.find(u => u.clave === 'PRD 100975'), 'cacao', {});
+  const r = N.importarGravi(jg(FUENTE()), [v]);
+  const w = r.visitas[0];
+  assert.deepStrictEqual(w.unidades.map(u => u.clave), ['PRD 100974', 'PRD 100975']);
+  assert.strictEqual(w.unidades[1].yaNoEstaEnGravi, true); assert.ok(!w.unidades[0].yaNoEstaEnGravi);
+  assert.deepStrictEqual([r.resumen.unidadesQuitadas, r.resumen.unidadesMarcadas], [1, 1]);
+  // y si vuelve, la marca se va
+  const z = N.importarGravi(jg(f), [w]).visitas[0];
+  assert.ok(!z.unidades[1].yaNoEstaEnGravi);
+});
+prueba('Gravi: unidades a mano o de la Lista dentro de una visita de Gravi no se tocan; cultivo añadido con muestra se conserva', () => {
+  const v = N.importarGravi(jg(FUENTE()), []).visitas[0];
+  const mano = N.crearUnidadAMano({ productor: 'P', finca: 'F', cultivos: ['cacao'] }); v.unidades.push(mano);
+  v.unidades[0].cultivos.push('plátano'); muestraCompleta(v, v.unidades[0], 'plátano', {});
+  const r = N.importarGravi(jg(FUENTE()), [v]);
+  const w = r.visitas.length ? r.visitas[0] : v;
+  assert.ok(w.unidades.some(u => u.clave === mano.clave));
+  assert.deepStrictEqual(w.unidades[0].cultivos, ['banano', 'plátano']);
+});
+prueba('Gravi: el ADT escrito en el teléfono no se pisa; el vacío se llena', () => {
+  const f = FUENTE(); f.visitas[0].numADT = '';
+  const v = N.importarGravi(jg(f), []).visitas[0];
+  assert.strictEqual(v.adt, '');
+  v.adt = '1234';
+  const igual = N.importarGravi(jg(FUENTE()), [v]);
+  assert.strictEqual(igual.visitas.length, 0); assert.strictEqual(v.adt, '1234'); // nada que guardar: queda el tecleado
+  assert.match(igual.resumen.avisos[0], /ADT 700001.*1234/);
+  v.adt = '';
+  assert.strictEqual(N.importarGravi(jg(FUENTE()), [v]).visitas[0].adt, '700001');
+});
+prueba('Gravi: grupo, una unidad por socio con la misma clave de PRD', () => {
+  const f = FUENTE(); f.visitas[0].modo = 'grupo';
+  f.visitas[0].unidades = ['Socio Uno', 'Socio Dos'].map((s, i) => ({ clave: 'PRD 100974|' + s + '|Finca ' + i, codigo: 'PRD 100974', productor: s, finca: 'Finca ' + i, cultivos: ['banano'] }));
+  const v = N.importarGravi(jg(f), []).visitas[0];
+  assert.strictEqual(v.unidades.length, 2); assert.strictEqual(v.unidades[1].productor, 'Socio Dos');
+  assert.strictEqual(N.nombreUnidad(v.unidades[1]), 'Socio Dos');
+});
+prueba('Gravi: rechaza con mensaje claro lo que no es del formato', () => {
+  const casos = [
+    ['no json', /JSON válido/], ['{"formato":"muestras-campo"}', /visitas de Gravi/],
+    [jg(Object.assign(FUENTE(), { version: 2 })), /Versión.*no soportada/], [jg(Object.assign(FUENTE(), { visitas: null })), /lista de visitas/],
+    [jg((() => { const f = FUENTE(); delete f.visitas[0].id; return f; })()), /visita 1 no trae id/],
+    [jg((() => { const f = FUENTE(); f.visitas.push(f.visitas[0]); return f; })()), /repite el id/],
+    [jg((() => { const f = FUENTE(); f.visitas[0].expediente = ''; return f; })()), /no trae expediente/],
+    [jg((() => { const f = FUENTE(); f.visitas[0].desde = '5/11/2026'; return f; })()), /fecha inválida/],
+    [jg((() => { const f = FUENTE(); f.visitas[0].unidades = {}; return f; })()), /lista de unidades/],
+    [jg((() => { const f = FUENTE(); delete f.visitas[0].unidades[0].clave; return f; })()), /no trae clave/],
+    [jg((() => { const f = FUENTE(); f.visitas[0].unidades.push(f.visitas[0].unidades[0]); return f; })()), /repite la clave/],
+    [jg((() => { const f = FUENTE(); f.visitas[0].unidades[0].coord = { lat: 'x', lon: 1 }; return f; })()), /coordenada inválida/]
+  ];
+  casos.forEach(([t, re]) => { const r = N.importarGravi(t, []); assert.match(r.error || '', re, t.slice(0, 60)); assert.ok(!r.visitas); });
+  assert.ok(!N.importarGravi(jg(FUENTE()), []).error);
+});
+prueba('Gravi: identidad por clave, no por nombre; unidades de Gravi sin código se marcan', () => {
+  const f = FUENTE(); f.visitas[0].unidades[0].codigo = '';
+  const u = N.importarGravi(jg(f), []).visitas[0].unidades[0];
+  assert.ok(!N.tieneCodigo(u)); assert.strictEqual(N.textoPRD(u), 'sin código PRD');
 });
 
 console.log('Teselas');

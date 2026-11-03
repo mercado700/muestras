@@ -64,10 +64,16 @@
   // PRD de la hoja tal como se enseña: nunca se inventa ni se hereda de otra hoja.
   function textoPRD(u) {
     if (u.origen === 'a_mano') return 'a mano · sin código';
+    if (u.origen === 'gravi') return u.codigo ? String(u.codigo) : 'sin código PRD';
     if (u.prd) return 'PRD ' + u.prd;
     if (u.prdVarios && u.prdVarios.length) return 'varios PRD: ' + u.prdVarios.join(', ');
     return 'sin código PRD' + (u.prdHoja ? ' (la hoja dice: ' + u.prdHoja + ')' : '');
   }
+
+  // ¿Tiene código de Control Union? Las de Gravi lo traen en `codigo`; las de la Lista, en `prd` de la hoja.
+  function tieneCodigo(u) { return u.origen === 'gravi' ? !!u.codigo : (u.origen !== 'a_mano' && !!u.prd); }
+  // Nombre corto para avisos: el productor, o la finca cuando es un individual sin productor aparte.
+  function nombreUnidad(u) { return u.productor || u.finca || '(sin nombre)'; }
 
   function normCultivo(c) { return String(c || '').trim().toLowerCase(); }
 
@@ -108,7 +114,7 @@
       id: nuevoId(), clave: unidad.clave, cultivo: normCultivo(cultivo),
       numero: siguienteNumero(visita, unidad, cultivo),
       puntos: [],
-      precintos: { laboratorio: '', cu: '', contramuestra: 'NA', adt: '' },
+      precintos: { laboratorio: '', cu: '', contramuestra: 'NA' },
       nota: ''
     };
     return m;
@@ -165,7 +171,7 @@
   function nuevaVisita(expediente, cliente) {
     return {
       id: nuevoId(), expediente: String(expediente || '').trim(), cliente: String(cliente || '').trim(),
-      creada: new Date().toISOString(), unidades: [], muestras: []
+      creada: new Date().toISOString(), origen: 'a_mano', adt: '', unidades: [], muestras: []
     };
   }
 
@@ -201,7 +207,7 @@
     return { conMuestra: n, total: visita.unidades.length };
   }
 
-  // Avance de la visita: unidades, unidades con muestra y muestras completas (≥3 puntos + laboratorio + CU + ADT).
+  // Avance de la visita: unidades, unidades con muestra y muestras completas (≥3 puntos + laboratorio + CU).
   function avance(visita) {
     var r = resumenVisita(visita);
     var completas = visita.muestras.filter(function (m) { var e = estadoMuestra(m); return e.puntosOk && e.precintosOk; }).length;
@@ -241,7 +247,7 @@
     return {
       puntos: m.puntos.length,
       puntosOk: m.puntos.length >= MIN_PUNTOS,
-      precintosOk: !precintoVacio(p.laboratorio) && !precintoVacio(p.cu) && String(p.adt || '').trim() !== ''
+      precintosOk: !precintoVacio(p.laboratorio) && !precintoVacio(p.cu) // el ADT es de la visita, no de la muestra
     };
   }
 
@@ -275,7 +281,7 @@
 
   var CAMPOS_PRECINTO = [
     ['laboratorio', 'precinto de laboratorio'], ['cu', 'precinto de CU'],
-    ['contramuestra', 'precinto de contramuestra'], ['adt', 'ADT']
+    ['contramuestra', 'precinto de contramuestra']
   ];
 
   // Devuelve {errores:[…], avisos:[…]}; cada línea: {nivel, muestraId, texto}. muestraId null si no lleva a una muestra.
@@ -284,6 +290,12 @@
     function err(m, t) { errores.push({ nivel: 'error', muestraId: m.id, texto: etiquetaMuestra(visita, m) + ': ' + t }); }
     function avi(m, t) { avisos.push({ nivel: 'aviso', muestraId: m.id, texto: etiquetaMuestra(visita, m) + ': ' + t }); }
 
+    // El ADT es uno por visita: sin él no se sale de la finca.
+    if (String(visita.adt == null ? '' : visita.adt).trim() === '') {
+      errores.push({ nivel: 'error', muestraId: null, texto: 'Falta el ADT de la visita (escríbelo arriba en la pantalla de la visita)' });
+    }
+    if (visita.avisoMigracion) avisos.push({ nivel: 'aviso', muestraId: null, texto: visita.avisoMigracion + ' Confirma el ADT de la visita.' });
+
     visita.muestras.forEach(function (m) {
       var p = m.precintos || {};
       if (m.puntos.length < MIN_PUNTOS) {
@@ -291,7 +303,6 @@
       }
       if (precintoVacio(p.laboratorio)) err(m, 'falta el precinto de laboratorio');
       if (precintoVacio(p.cu)) err(m, 'falta el precinto de CU');
-      if (String(p.adt || '').trim() === '') err(m, 'falta el ADT');
       if (String(p.contramuestra == null ? '' : p.contramuestra).trim() === '') avi(m, 'contramuestra vacía: escribe NA si no hubo');
 
       var ps = ordenarPuntos(m);
@@ -319,15 +330,12 @@
     Object.keys(usos).forEach(function (k) {
       var lista = usos[k];
       if (lista.length < 2) return;
-      // El ADT repetido entre muestras puede ser la misma remesa: aviso. Cualquier otro precinto repetido: error.
-      var soloAdt = lista.every(function (u) { return u.campo === 'ADT'; });
       lista.forEach(function (u) {
         var otros = lista.filter(function (o) { return o !== u; }).map(function (o) {
           var uo = unidadDeMuestra(visita, o.m) || {};
           return [uo.productor, uo.finca].filter(Boolean).join(' · ') + ' Muestra ' + o.m.numero + ' ' + o.m.cultivo + ' (' + o.campo + ')';
         });
-        if (soloAdt) avi(u.m, 'ADT repetido «' + u.valor + '» también en ' + otros.map(function (o) { return o.replace(' (ADT)', ''); }).join('; ') + ': confirma si es la misma remesa');
-        else err(u.m, 'el precinto «' + u.valor + '» (' + u.campo + ') está repetido en ' + otros.join('; '));
+        err(u.m, 'el precinto «' + u.valor + '» (' + u.campo + ') está repetido en ' + otros.join('; '));
       });
     });
 
@@ -348,8 +356,44 @@
     return 'muestras-' + exp + '-' + aaaammdd(fecha || new Date()) + '.' + (ext || 'json');
   }
 
+  // Código de la unidad para el archivo: el de Gravi, o «PRD n» cuando la hoja de la Lista trae uno solo.
+  function codigoExportado(u) {
+    if (u.codigo) return String(u.codigo);
+    return u.prd ? 'PRD ' + u.prd : '';
+  }
+
+  // Formato v2: ADT y origen en la visita; unidades con `codigo`; muestras sin ADT.
   function aJSON(visita) {
-    return JSON.stringify({ formato: 'muestras-campo', version: 1, visita: visita }, null, 2);
+    var o = JSON.parse(JSON.stringify(visita));
+    o.origen = o.origen || 'a_mano';
+    o.adt = String(o.adt == null ? '' : o.adt).trim();
+    o.unidades.forEach(function (u) { u.codigo = codigoExportado(u); });
+    o.muestras.forEach(function (m) { if (m.precintos) delete m.precintos.adt; });
+    return JSON.stringify({ formato: 'muestras-campo', version: 2, visita: o }, null, 2);
+  }
+
+  // ADT por visita. Pasa el ADT de las muestras (v1 y visitas guardadas) a la visita: si comparten uno (o están vacíos),
+  // ese; si difieren, el más repetido (a igualdad, el primero) y `avisoMigracion` para que «Revisar» lo diga.
+  // Idempotente; devuelve true si cambió algo.
+  function migrarVisita(v) {
+    var cambio = false, vistos = [], cuenta = {};
+    (v.muestras || []).forEach(function (m) {
+      var p = m.precintos;
+      if (!p || !('adt' in p)) return;
+      var a = String(p.adt == null ? '' : p.adt).trim();
+      if (a) { if (!(a in cuenta)) { cuenta[a] = 0; vistos.push(a); } cuenta[a]++; }
+      delete p.adt; cambio = true;
+    });
+    if (v.adt == null) { v.adt = ''; cambio = true; }
+    var actual = String(v.adt).trim();
+    if (!actual && vistos.length) {
+      actual = vistos.reduce(function (mejor, a) { return cuenta[a] > cuenta[mejor] ? a : mejor; }, vistos[0]);
+      v.adt = actual; cambio = true;
+    }
+    if (vistos.some(function (a) { return a !== actual; })) {
+      v.avisoMigracion = 'Había ADT distintos por muestra: ' + vistos.join(', ') + '.'; cambio = true;
+    }
+    return cambio;
   }
 
   // Valida un archivo importado; devuelve {visita} o {error}.
@@ -357,7 +401,7 @@
     var o;
     try { o = JSON.parse(texto); } catch (e) { return { error: 'El archivo no es un JSON válido.' }; }
     if (!o || o.formato !== 'muestras-campo') return { error: 'No es un archivo de Muestras de campo.' };
-    if (o.version !== 1) return { error: 'Versión de formato no soportada: ' + o.version + '.' };
+    if (o.version !== 1 && o.version !== 2) return { error: 'Versión de formato no soportada: ' + o.version + '.' };
     var v = o.visita;
     if (!v || !v.id || !Array.isArray(v.unidades) || !Array.isArray(v.muestras)) return { error: 'El archivo no trae una visita completa.' };
     var fin = function (x) { return typeof x === 'number' && isFinite(x); };
@@ -374,9 +418,10 @@
     }
     v.muestras.forEach(function (m) {
       m.puntos = m.puntos || [];
-      m.precintos = Object.assign({ laboratorio: '', cu: '', contramuestra: 'NA', adt: '' }, m.precintos || {});
+      m.precintos = Object.assign({ laboratorio: '', cu: '', contramuestra: 'NA' }, m.precintos || {}); // un `adt` de v1 lo recoge migrarVisita
       m.nota = m.nota || '';
     });
+    migrarVisita(v);
     return { visita: v };
   }
 
@@ -389,12 +434,12 @@
 
   // CSV de puntos: separador «;», punto decimal.
   function csvPuntos(visita) {
-    var cab = ['expediente', 'cliente', 'prd', 'cod_campo', 'productor', 'finca', 'cultivo', 'muestra', 'punto', 'lat', 'lon', 'alt', 'precision', 'hora'];
+    var cab = ['expediente', 'cliente', 'adt', 'prd', 'cod_campo', 'productor', 'finca', 'cultivo', 'muestra', 'punto', 'lat', 'lon', 'alt', 'precision', 'hora'];
     var filas = [cab];
     visita.muestras.forEach(function (m) {
       var u = unidadDeMuestra(visita, m) || {};
       ordenarPuntos(m).forEach(function (p) {
-        filas.push([visita.expediente, visita.cliente, u.prd || (u.prdVarios && u.prdVarios.length ? u.prdVarios.join('+') : ''), u.codCampo || '', u.productor || '', u.finca || '', m.cultivo, m.numero, p.n,
+        filas.push([visita.expediente, visita.cliente, visita.adt || '', u.prd || (u.prdVarios && u.prdVarios.length ? u.prdVarios.join('+') : String(u.codigo || '').replace(/^PRD\s*/i, '')), u.codCampo || '', u.productor || '', u.finca || '', m.cultivo, m.numero, p.n,
           decimal(p.lat), decimal(p.lon), p.alt == null ? '' : p.alt, p.precision == null ? '' : p.precision, p.hora || '']);
       });
     });
@@ -403,7 +448,7 @@
 
   // Resumen en texto para Notas/WhatsApp.
   function resumenTexto(visita) {
-    var L = ['Muestras de campo · Expediente ' + visita.expediente + ' · ' + visita.cliente, 'Visita ' + fechaDMA(visita.creada), ''];
+    var L = ['Muestras de campo · Expediente ' + visita.expediente + ' · ' + visita.cliente, 'Visita ' + (isoDMA(visita.desde) || fechaDMA(visita.creada)), 'ADT: ' + (visita.adt || '—'), ''];
     visita.muestras.forEach(function (m) {
       var u = unidadDeMuestra(visita, m) || {};
       var p = m.precintos || {};
@@ -418,11 +463,171 @@
       L.push('  Precinto laboratorio: ' + (p.laboratorio || '—'));
       L.push('  Precinto CU: ' + (p.cu || '—'));
       L.push('  Precinto contramuestra: ' + (p.contramuestra || '—'));
-      L.push('  ADT: ' + (p.adt || '—'));
       if (m.nota) L.push('  Nota: ' + m.nota);
       L.push('');
     });
     return L.join('\n');
+  }
+
+  // ---------- Fechas de la agenda (fechas de visita en aaaa-mm-dd) ----------
+  function hoyISO(fecha) {
+    var d = fecha instanceof Date ? fecha : new Date();
+    return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate());
+  }
+  function fechaISOValida(s) {
+    if (typeof s !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(s)) return false;
+    var p = s.split('-').map(Number), d = new Date(Date.UTC(p[0], p[1] - 1, p[2]));
+    return d.getUTCFullYear() === p[0] && d.getUTCMonth() === p[1] - 1 && d.getUTCDate() === p[2];
+  }
+  function isoDMA(s) { return fechaISOValida(s) ? s.slice(8, 10) + '/' + s.slice(5, 7) + '/' + s.slice(0, 4) : ''; }
+  function sumarDias(iso, n) {
+    var p = iso.split('-').map(Number), d = new Date(Date.UTC(p[0], p[1] - 1, p[2] + n));
+    return d.getUTCFullYear() + '-' + pad(d.getUTCMonth() + 1) + '-' + pad(d.getUTCDate());
+  }
+  // {desde, hasta} válidos de una visita, o null si no tiene fecha de visita.
+  function fechasVisita(v) {
+    if (!fechaISOValida(v.desde)) return null;
+    var h = fechaISOValida(v.hasta) && v.hasta >= v.desde ? v.hasta : v.desde;
+    return { desde: v.desde, hasta: h };
+  }
+  // «Hoy», «Mañana», dd/mm/aaaa o, si dura varios días, el rango.
+  function etiquetaFecha(v, hoy) {
+    var f = fechasVisita(v);
+    if (!f) return '';
+    var manana = sumarDias(hoy, 1);
+    if (f.desde === f.hasta) return f.desde === hoy ? 'Hoy' : f.desde === manana ? 'Mañana' : isoDMA(f.desde);
+    var rango = isoDMA(f.desde) + ' – ' + isoDMA(f.hasta);
+    if (f.desde <= hoy && hoy <= f.hasta) return 'Hoy · ' + rango;
+    return f.desde === manana ? 'Mañana · ' + rango : rango;
+  }
+  // Agenda: próximas (por fecha de visita), luego pasadas (la más reciente primero) y sin fecha (la más nueva primero).
+  function agenda(visitas, hoy) {
+    var prox = [], pas = [], sin = [];
+    visitas.forEach(function (v) {
+      var f = fechasVisita(v);
+      if (!f) sin.push(v); else if (f.hasta >= hoy) prox.push(v); else pas.push(v);
+    });
+    var por = function (a, b) { return a < b ? -1 : a > b ? 1 : 0; };
+    prox.sort(function (a, b) { var x = fechasVisita(a), y = fechasVisita(b); return por(x.desde, y.desde) || por(x.hasta, y.hasta) || por(String(a.expediente), String(b.expediente)); });
+    pas.sort(function (a, b) { return por(fechasVisita(b).hasta, fechasVisita(a).hasta) || por(String(a.expediente), String(b.expediente)); });
+    sin.sort(function (a, b) { return por(b.creada || '', a.creada || ''); });
+    return [{ clave: 'proximas', titulo: 'Próximas', visitas: prox }, { clave: 'pasadas', titulo: 'Pasadas', visitas: pas },
+      { clave: 'sin-fecha', titulo: 'Sin fecha', visitas: sin }].filter(function (g) { return g.visitas.length; });
+  }
+
+  // ---------- Traer de Gravi (visitas-de-campo.json, formato gravi-visitas-campo) ----------
+  function textoNoVacio(x) { return (typeof x === 'string' || typeof x === 'number') && String(x).trim() !== ''; }
+
+  // Valida el archivo entero: ante cualquier visita o unidad mal formada se rechaza todo, con el motivo.
+  function validarGravi(texto) {
+    var o;
+    try { o = JSON.parse(texto); } catch (e) { return { error: 'El archivo no es un JSON válido.' }; }
+    if (!o || o.formato !== 'gravi-visitas-campo') return { error: 'No es un archivo de visitas de Gravi (visitas-de-campo.json).' };
+    if (o.version !== 1) return { error: 'Versión del archivo de Gravi no soportada: ' + o.version + '.' };
+    if (!Array.isArray(o.visitas)) return { error: 'El archivo de Gravi no trae la lista de visitas.' };
+    var ids = {}, fin = function (x) { return typeof x === 'number' && isFinite(x); };
+    for (var i = 0; i < o.visitas.length; i++) {
+      var g = o.visitas[i], n = 'Archivo rechazado: la visita ' + (i + 1);
+      if (!g || typeof g !== 'object' || !textoNoVacio(g.id)) return { error: n + ' no trae id.' };
+      if (ids[g.id]) return { error: n + ' repite el id «' + g.id + '».' };
+      ids[g.id] = true;
+      if (!textoNoVacio(g.expediente)) return { error: n + ' (' + g.id + ') no trae expediente.' };
+      var fechas = [g.desde, g.hasta];
+      for (var f = 0; f < 2; f++) if (fechas[f] != null && fechas[f] !== '' && !fechaISOValida(fechas[f])) return { error: n + ' (' + g.id + ') tiene una fecha inválida: «' + fechas[f] + '».' };
+      if (g.numADT != null && typeof g.numADT !== 'string' && typeof g.numADT !== 'number') return { error: n + ' (' + g.id + ') trae un ADT mal formado.' };
+      if (!Array.isArray(g.unidades)) return { error: n + ' (' + g.id + ') no trae la lista de unidades.' };
+      var claves = {};
+      for (var j = 0; j < g.unidades.length; j++) {
+        var u = g.unidades[j], nu = n + ' (' + g.id + '), unidad ' + (j + 1);
+        if (!u || typeof u !== 'object' || !textoNoVacio(u.clave)) return { error: nu + ': no trae clave.' };
+        if (claves[u.clave]) return { error: nu + ': repite la clave «' + u.clave + '».' };
+        claves[u.clave] = true;
+        if (u.cultivos != null && !Array.isArray(u.cultivos)) return { error: nu + ': cultivos mal formados.' };
+        if (u.ha != null && !fin(u.ha)) return { error: nu + ': hectáreas inválidas.' };
+        if (u.coord != null && (typeof u.coord !== 'object' || !fin(u.coord.lat) || !fin(u.coord.lon) || Math.abs(u.coord.lat) > 90 || Math.abs(u.coord.lon) > 180))
+          return { error: nu + ': coordenada inválida.' };
+      }
+    }
+    return { gravi: o };
+  }
+
+  function unidadDeGravi(u) {
+    var cult = [];
+    (u.cultivos || []).forEach(function (c) { c = normCultivo(c); if (c && cult.indexOf(c) < 0) cult.push(c); });
+    return {
+      clave: String(u.clave), codigo: String(u.codigo == null ? '' : u.codigo).trim(),
+      productor: String(u.productor || '').trim(), finca: String(u.finca || '').trim(), hoja: String(u.hoja || '').trim(),
+      cultivos: cult, haCultivo: u.ha == null ? null : u.ha, haTotal: u.ha == null ? null : u.ha,
+      estatus: u.estatus || '', adicion: u.adicion == null ? null : u.adicion,
+      coord: u.coord ? { lat: u.coord.lat, lon: u.coord.lon } : null, origen: 'gravi'
+    };
+  }
+
+  function plural(n, uno, varios) { return n + ' ' + (n === 1 ? uno : varios); }
+  function textoResumenGravi(r) {
+    var p = [];
+    if (r.nuevas) p.push(plural(r.nuevas, 'visita nueva', 'visitas nuevas'));
+    if (r.actualizadas) p.push(plural(r.actualizadas, 'actualizada', 'actualizadas'));
+    if (r.iguales) p.push(plural(r.iguales, 'sin cambios', 'sin cambios'));
+    return p.length ? p.join(', ') : 'El archivo no trae visitas.';
+  }
+
+  // Crea o actualiza visitas por `graviId`. Nunca borra ni toca muestras, puntos ni precintos.
+  // Devuelve {visitas (solo las que cambian y hay que guardar), resumen, texto} o {error}.
+  function importarGravi(texto, existentes, ahora) {
+    var val = validarGravi(texto);
+    if (val.error) return val;
+    ahora = ahora || new Date().toISOString();
+    var porGravi = {}, ids = {};
+    (existentes || []).forEach(function (e) { ids[e.id] = true; if (e.graviId) porGravi[e.graviId] = e; });
+    var res = { nuevas: 0, actualizadas: 0, iguales: 0, unidadesNuevas: 0, unidadesQuitadas: 0, unidadesMarcadas: 0, avisos: [] };
+    var cambiadas = [];
+    val.gravi.visitas.forEach(function (g) {
+      var ex = porGravi[g.id], vis, antes = null;
+      if (ex) { vis = JSON.parse(JSON.stringify(ex)); antes = JSON.stringify(ex); }
+      else {
+        var base = 'gravi-' + String(g.id).replace(/[^A-Za-z0-9_-]+/g, '-'), id = base, k = 1;
+        while (ids[id]) id = base + '-' + (++k);
+        ids[id] = true;
+        vis = { id: id, creada: ahora, adt: '', unidades: [], muestras: [] };
+      }
+      vis.origen = 'gravi'; vis.graviId = g.id;
+      vis.expediente = String(g.expediente).trim();
+      vis.cliente = String(g.cliente || vis.cliente || '').trim();
+      vis.tipo = g.tipo || ''; vis.tipoTexto = g.tipoTexto || ''; vis.modo = g.modo || '';
+      vis.desde = g.desde || null; vis.hasta = g.hasta || null;
+      var adtG = String(g.numADT == null ? '' : g.numADT).trim(), adtV = String(vis.adt == null ? '' : vis.adt).trim();
+      if (adtG && !adtV) vis.adt = adtG;
+      else if (adtG && adtV && adtG !== adtV) res.avisos.push('Visita ' + vis.expediente + ': Gravi trae el ADT ' + adtG + ' y el teléfono tiene ' + adtV + '; se dejó el del teléfono.');
+      else if (vis.adt == null) vis.adt = '';
+
+      var porClave = {}, vistas = {};
+      vis.unidades.forEach(function (u) { porClave[u.clave] = u; });
+      g.unidades.forEach(function (gu) {
+        var datos = unidadDeGravi(gu), u = porClave[datos.clave];
+        vistas[datos.clave] = true;
+        if (u) {
+          // Un cultivo que el inspector añadió a mano y ya tiene muestra no se pierde.
+          vis.muestras.forEach(function (m) {
+            var c = normCultivo(m.cultivo);
+            if (m.clave === u.clave && c && datos.cultivos.indexOf(c) < 0) datos.cultivos.push(c);
+          });
+          delete u.yaNoEstaEnGravi;
+          Object.assign(u, datos);
+        } else { vis.unidades.push(datos); res.unidadesNuevas++; }
+      });
+      vis.unidades = vis.unidades.filter(function (u) {
+        if (u.origen !== 'gravi' || vistas[u.clave]) return true;
+        var tiene = vis.muestras.some(function (m) { return m.clave === u.clave; });
+        if (!tiene) { res.unidadesQuitadas++; return false; }
+        if (!u.yaNoEstaEnGravi) { u.yaNoEstaEnGravi = true; res.unidadesMarcadas++; }
+        return true;
+      });
+      if (!ex) { res.nuevas++; vis.modificada = ahora; cambiadas.push(vis); }
+      else if (JSON.stringify(vis) !== antes) { res.actualizadas++; vis.modificada = ahora; cambiadas.push(vis); }
+      else res.iguales++;
+    });
+    return { visitas: cambiadas, resumen: res, texto: textoResumenGravi(res) };
   }
 
   // ---------- Teselas ----------
@@ -461,7 +666,9 @@
     UMBRAL_CERCA_M: UMBRAL_CERCA_M, UMBRAL_PRECISION_M: UMBRAL_PRECISION_M, MIN_PUNTOS: MIN_PUNTOS,
     nuevoId: nuevoId, distanciaM: distanciaM, aGMS: aGMS, gmsPar: gmsPar, decimal: decimal,
     fechaDMA: fechaDMA, horaHM: horaHM, aaaammdd: aaaammdd,
-    textoPRD: textoPRD, claveUnidad: claveUnidad, claveMuestra: claveMuestra, normCultivo: normCultivo,
+    textoPRD: textoPRD, tieneCodigo: tieneCodigo, nombreUnidad: nombreUnidad, migrarVisita: migrarVisita,
+    hoyISO: hoyISO, fechaISOValida: fechaISOValida, isoDMA: isoDMA, sumarDias: sumarDias, etiquetaFecha: etiquetaFecha, agenda: agenda,
+    validarGravi: validarGravi, importarGravi: importarGravi, textoResumenGravi: textoResumenGravi, claveUnidad: claveUnidad, claveMuestra: claveMuestra, normCultivo: normCultivo,
     crearUnidadAMano: crearUnidadAMano, numeroSiguiente: numeroSiguiente, cambiarCultivo: cambiarCultivo, borrarMuestra: borrarMuestra, quitarUnidad: quitarUnidad, conciliarUnidades: conciliarUnidades, contarVisita: contarVisita, compararVisitas: compararVisitas, estadoGPS: estadoGPS, teselaSinDatos: teselaSinDatos, GPS_VIEJO_S: GPS_VIEJO_S, crearMuestra: crearMuestra,
     unidadDeMuestra: unidadDeMuestra, nuevaVisita: nuevaVisita, numeroPunto: numeroPunto,
     puntoCercano: puntoCercano, ordenarPuntos: ordenarPuntos, resumenVisita: resumenVisita, avance: avance,

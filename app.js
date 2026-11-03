@@ -100,9 +100,11 @@
       });
     });
   }
+  // Visitas guardadas antes del ADT por visita: se migran al leerlas y se guardan ya migradas.
+  function migrada(v) { if (v && N.migrarVisita(v)) Visitas.guardar(v).catch(function () {}); return v; }
   var Visitas = {
-    todas: function () { return tx('visitas', 'readonly', function (s) { return s.getAll(); }); },
-    leer: function (id) { return tx('visitas', 'readonly', function (s) { return s.get(id); }); },
+    todas: function () { return tx('visitas', 'readonly', function (s) { return s.getAll(); }).then(function (vs) { return vs.map(migrada); }); },
+    leer: function (id) { return tx('visitas', 'readonly', function (s) { return s.get(id); }).then(migrada); },
     guardar: function (v) { return tx('visitas', 'readwrite', function (s) { return s.put(v); }); },
     borrar: function (id) { return tx('visitas', 'readwrite', function (s) { return s.delete(id); }); }
   };
@@ -238,37 +240,61 @@
   }
   window.addEventListener('hashchange', render);
 
-  // ---------- 1. Visitas ----------
+  // ---------- 1. Visitas (agenda) ----------
   function visitas() {
     visita = null;
     Visitas.todas().then(function (todas) {
-      todas.sort(function (a, b) { return a.creada < b.creada ? 1 : -1; });
+      var hoy = N.hoyISO();
       var archivo = h('input', { type: 'file', accept: '.json,application/json', hidden: true, onchange: importar });
-      var indicadorEl = h('div', { class: 'tarjeta' }, h('span', { class: 'suave' }, 'Comprobando instalación…'));
+      var archivoGravi = h('input', { type: 'file', accept: '.json,application/json', hidden: true, onchange: traerDeGravi });
+      var indicadorEl = h('div', { class: 'indicadores' }, h('span', { class: 'suave chico' }, 'Comprobando instalación…'));
       estadoInstalacion().then(function (e) {
-        function fila(texto, si) { return h('div', null, texto + ': ', h('strong', { class: si ? 'ok' : 'mal' }, si ? 'sí' : 'no')); }
-        pon(indicadorEl, fila('Instalada en pantalla de inicio', e.instalada), fila('Lista sin señal', e.sinSenal), fila('Almacenamiento protegido', e.protegido),
+        function pastilla(texto, si) { return h('span', { class: 'insignia ' + (si ? 'ok' : 'aviso') }, texto + ': ' + (si ? 'sí' : 'no')); }
+        pon(indicadorEl, h('div', { class: 'fila envuelve', style: 'gap:6px' }, pastilla('Instalada', e.instalada), pastilla('Lista sin señal', e.sinSenal), pastilla('Almacenamiento protegido', e.protegido)),
           e.instalada ? null : h('p', { class: 'alerta chico' }, 'Safari y el icono de la pantalla de inicio guardan los datos por separado: trabaja siempre desde el icono, no desde Safari.'),
           e.sinSenal ? null : h('p', { class: 'suave chico' }, 'Abre la página una vez con señal para que quede guardada.'));
       });
-      pon(appEl, 
+      function fila(v) {
+        var a = N.avance(v), fecha = N.etiquetaFecha(v, hoy) || ('Creada ' + N.fechaDMA(v.creada));
+        return h('div', { class: 'tarjeta' },
+          h('div', { class: 'fila sep' },
+            h('button', { type: 'button', class: 'visita-ab crece', onclick: function () { ir('#/v/' + v.id); } },
+              h('strong', null, 'Exp. ' + (v.expediente || 's/n')), v.origen === 'gravi' ? [' ', h('span', { class: 'insignia gravi' }, 'de Gravi')] : null,
+              h('div', null, v.cliente || '(sin cliente)')),
+            boton('Borrar', function () {
+              var c = N.contarVisita(v);
+              confirmar('¿Borrar la visita ' + v.expediente + ' de este teléfono? Se pierden ' + c.muestras + (c.muestras === 1 ? ' muestra' : ' muestras') + ' y ' + c.puntos + (c.puntos === 1 ? ' punto' : ' puntos') + ' que no hayas exportado.', 'Borrar').then(function (si) { if (si) Visitas.borrar(v.id).then(render); });
+            }, 'peligro')),
+          h('p', { class: 'suave' }, h('strong', null, fecha), ' · ' + a.conMuestra + '/' + a.unidades + ' con muestra · ' + a.completas + (a.completas === 1 ? ' completa' : ' completas')));
+      }
+      pon(appEl,
         h('h1', null, 'Muestras de campo'),
         indicadorEl,
-        h('div', { class: 'fila envuelve' }, boton('Nueva visita', nuevaVisita, 'primario'), boton('Importar archivo', function () { archivo.click(); }), archivo),
-        todas.length ? todas.map(function (v) {
-          var r = N.resumenVisita(v);
-          return h('div', { class: 'tarjeta' },
-            h('div', { class: 'fila sep' },
-              h('button', { type: 'button', class: 'atras crece', style: 'text-align:left', onclick: function () { ir('#/v/' + v.id); } },
-                h('strong', null, 'Exp. ' + (v.expediente || 's/n') + ' · ' + v.cliente)),
-              boton('Borrar', function () {
-                var c = N.contarVisita(v);
-                confirmar('¿Borrar la visita ' + v.expediente + ' de este teléfono? Se pierden ' + c.muestras + (c.muestras === 1 ? ' muestra' : ' muestras') + ' y ' + c.puntos + (c.puntos === 1 ? ' punto' : ' puntos') + ' que no hayas exportado.', 'Borrar').then(function (si) { if (si) Visitas.borrar(v.id).then(render); });
-              }, 'peligro')),
-            h('p', { class: 'suave' }, N.fechaDMA(v.creada) + ' · ' + r.conMuestra + '/' + r.total + ' productores con muestra'));
-        }) : h('p', { class: 'suave' }, 'Aún no hay visitas.'));
+        h('div', { class: 'fila envuelve' }, boton('Traer de Gravi', function () { archivoGravi.click(); }, 'primario'), boton('Nueva visita', nuevaVisita), boton('Importar archivo', function () { archivo.click(); }), archivo, archivoGravi),
+        todas.length ? N.agenda(todas, hoy).map(function (g) { return [h('h2', null, g.titulo), g.visitas.map(fila)]; })
+          : h('p', { class: 'suave' }, 'Aún no hay visitas. «Traer de Gravi» carga las de la agenda; «Nueva visita» crea una a mano.'));
     });
   }
+  // Lee visitas-de-campo.json (de Gravi) y crea o actualiza visitas; no toca muestras, puntos ni precintos.
+  function traerDeGravi(e) {
+    var f = e.target.files[0]; e.target.value = '';
+    if (!f) return;
+    Promise.all([f.text(), Visitas.todas()]).then(function (r) {
+      var res = N.importarGravi(r[0], r[1]);
+      if (res.error) { aviso(res.error, true); return null; }
+      return Promise.all(res.visitas.map(function (v) { return Visitas.guardar(v); })).then(function () {
+        var x = res.resumen;
+        render();
+        var cerrar = modal([h('h2', { style: 'margin-top:0' }, 'Traído de Gravi'), h('p', null, h('strong', null, res.texto)),
+          x.unidadesNuevas ? h('p', { class: 'suave' }, plural(x.unidadesNuevas, 'unidad nueva', 'unidades nuevas')) : null,
+          x.unidadesQuitadas ? h('p', { class: 'suave' }, plural(x.unidadesQuitadas, 'unidad quitada (ya no está en Gravi y no tenía muestras)', 'unidades quitadas (ya no están en Gravi y no tenían muestras)')) : null,
+          x.unidadesMarcadas ? h('p', { class: 'alerta' }, plural(x.unidadesMarcadas, 'unidad con muestras ya no está en Gravi: se conserva y queda marcada', 'unidades con muestras ya no están en Gravi: se conservan y quedan marcadas')) : null,
+          x.avisos.map(function (t) { return h('p', { class: 'alerta' }, t); }),
+          h('div', { class: 'acciones' }, boton('Aceptar', function () { cerrar(); }, 'primario'))]);
+      });
+    }).catch(function () { aviso('No se pudo guardar lo traído de Gravi', true); });
+  }
+  function plural(n, uno, varios) { return n + ' ' + (n === 1 ? uno : varios); }
   // ¿Está instalada, lista sin señal (SW activo y todo el shell en caché) y con almacenamiento protegido?
   function estadoInstalacion() {
     var instalada = navigator.standalone === true || (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches);
@@ -314,13 +340,15 @@
     var todas = ms.every(function (m) { var e = N.estadoMuestra(m); return e.puntosOk && e.precintosOk; });
     return todas ? { clase: 'insignia ok', texto: '● Completa' } : { clase: 'insignia aviso', texto: '● Falta algo' };
   }
-  // Identidad de una unidad: productor arriba, finca y campo debajo, PRD de la hoja pequeño (ámbar si es un hueco).
+  // Identidad de una unidad: titular arriba (productor o, en un individual de Gravi, la finca), finca y campo debajo,
+  // código y hoja pequeños (ámbar si no hay código).
   function identidad(u, grande) {
-    var hueco = u.origen === 'a_mano' || !u.prd;
+    var hueco = !N.tieneCodigo(u), gravi = u.origen === 'gravi';
+    var segunda = gravi ? (u.productor && u.finca ? u.finca : '') : ((u.finca || '(sin finca)') + (u.codCampo ? ' · campo ' + u.codCampo : ''));
     return [
-      h('div', { class: grande ? 'titular' : 'titular chico-t' }, u.productor || '(sin productor)'),
-      h('div', null, (u.finca || '(sin finca)') + (u.codCampo ? ' · campo ' + u.codCampo : '')),
-      h('div', { class: hueco ? 'prd-hueco' : 'suave chico' }, N.textoPRD(u) + (!hueco && u.hoja ? ' · hoja ' + u.hoja : ''))
+      h('div', { class: grande ? 'titular' : 'titular chico-t' }, gravi ? N.nombreUnidad(u) : (u.productor || '(sin productor)')),
+      segunda ? h('div', null, segunda) : null,
+      h('div', { class: hueco ? 'prd-hueco' : 'suave chico' }, N.textoPRD(u) + (u.hoja && (gravi || !hueco) ? ' · hoja ' + u.hoja : ''))
     ];
   }
   function masAcciones(archivo) {
@@ -329,13 +357,22 @@
       boton('Agregar unidad a mano', function () { cerrar(); agregarUnidadAMano(); }, '', { style: 'width:100%;margin:6px 0' }),
       boton('Cerrar', function () { cerrar(); }, '', { style: 'width:100%;margin:6px 0' })]);
   }
+  // El ADT es uno por visita: se escribe aquí una vez (o viene de Gravi) y sale en «Revisar» y en la exportación.
+  function campoAdt() {
+    var i = h('input', { type: 'text', inputmode: 'numeric', autocomplete: 'off', value: visita.adt || '', 'aria-label': 'ADT de la visita' });
+    i.addEventListener('input', function () { visita.adt = i.value; delete visita.avisoMigracion; guardar(); });
+    return h('label', { class: 'campo' }, 'ADT de la visita (el mismo para todas las muestras)', i,
+      visita.avisoMigracion ? h('span', { class: 'alerta chico', style: 'display:block;font-weight:400' }, visita.avisoMigracion + ' Se tomó el más repetido: confírmalo.') : null);
+  }
   function pantallaVisita() {
     appEl.classList.add('con-barra');
     var archivo = h('input', { type: 'file', accept: '.xls,.xlsx,.xlsm', hidden: true, onchange: cargarLista });
     var rep = N.nombresRepetidos(visita.unidades);
     pon(appEl, 
       h('button', { class: 'atras', onclick: function () { ir('#/'); } }, '‹ Visitas'),
-      h('h1', null, 'Exp. ' + visita.expediente), h('p', { class: 'suave' }, visita.cliente + ' · ' + N.fechaDMA(visita.creada)),
+      h('h1', null, 'Exp. ' + visita.expediente, visita.origen === 'gravi' ? [' ', h('span', { class: 'insignia gravi' }, 'de Gravi')] : null),
+      h('p', { class: 'suave' }, [visita.cliente, visita.tipoTexto, N.etiquetaFecha(visita, N.hoyISO()) || N.fechaDMA(visita.creada)].filter(Boolean).join(' · ')),
+      campoAdt(),
       (function () { var a = N.avance(visita); return h('p', { class: 'avance' }, a.unidades + (a.unidades === 1 ? ' unidad' : ' unidades') + ' · ' + a.conMuestra + ' con muestra · ' + a.completas + (a.completas === 1 ? ' muestra completa' : ' muestras completas')); })(),
       h('p', { class: 'suave chico' }, visita.ultimoExportar ? 'Último exportar: ' + N.fechaDMA(visita.ultimoExportar) + ' ' + N.horaHM(visita.ultimoExportar) + '. Exporta al terminar cada finca.' : 'Aún no exportaste esta visita. Exporta al terminar cada finca.'),
       visita.unidades.length
@@ -352,6 +389,7 @@
     return h('div', { class: 'tarjeta unidad' },
       h('div', { class: 'cab' },
         h('div', { class: 'fila sep', style: 'align-items:flex-start' }, h('div', { class: 'crece' }, identidad(u, true)), h('span', { class: est.clase }, est.texto)),
+        u.yaNoEstaEnGravi ? h('div', { class: 'alerta' }, '⚠ Ya no está en Gravi (tiene muestras: se conserva)') : null,
         repetido ? h('div', { class: 'alerta' }, '⚠ Mismo nombre de ' + repetido.join(' y ') + ' que otra unidad: confirma por código de campo') : null,
         null),
       ms.map(function (m) {
@@ -366,8 +404,8 @@
   }
   function quitarUnidadUI(u, ms) {
     var puntos = ms.reduce(function (a, m) { return a + m.puntos.length; }, 0);
-    var txt = ms.length ? '¿Quitar a ' + u.productor + ' de la visita? Se borran ' + ms.length + (ms.length === 1 ? ' muestra' : ' muestras') + ' y ' + puntos + (puntos === 1 ? ' punto' : ' puntos') + ' (con sus precintos).'
-      : '¿Quitar a ' + u.productor + ' · ' + u.finca + ' de la visita?';
+    var txt = ms.length ? '¿Quitar a ' + N.nombreUnidad(u) + ' de la visita? Se borran ' + ms.length + (ms.length === 1 ? ' muestra' : ' muestras') + ' y ' + puntos + (puntos === 1 ? ' punto' : ' puntos') + ' (con sus precintos).'
+      : '¿Quitar a ' + [u.productor, u.finca].filter(Boolean).join(' · ') + ' de la visita?';
     confirmar(txt, 'Quitar').then(function (si) { if (si) { N.quitarUnidad(visita, u.clave); guardar().then(render); } });
   }
   function nuevaMuestra(u) {
@@ -429,7 +467,7 @@
       cuenta.textContent = n;
       pon(lista, visibles().map(function (x) {
         var u = x.u, incl = ya[u.clave];
-        var cb = h('input', { type: 'checkbox', checked: incl || P.sel[u.clave], disabled: incl, 'aria-label': 'Incluir ' + u.productor,
+        var cb = h('input', { type: 'checkbox', checked: incl || P.sel[u.clave], disabled: incl, 'aria-label': 'Incluir ' + N.nombreUnidad(u),
           onchange: function () { P.sel[u.clave] = cb.checked; cuenta.textContent = Object.keys(P.sel).filter(function (k) { return P.sel[k]; }).length; } });
         return h('label', { class: 'tarjeta item-sel' }, cb, h('div', { class: 'crece' },
           identidad(u, true),
@@ -521,7 +559,6 @@
       campoPrecinto('laboratorio', 'Precinto de laboratorio', { autocapitalize: 'characters' }),
       campoPrecinto('cu', 'Precinto de Control Union', { autocapitalize: 'characters' }),
       campoPrecinto('contramuestra', 'Precinto de contramuestra (NA si no hay)', { autocapitalize: 'characters' }),
-      campoPrecinto('adt', 'Número de ADT', { inputmode: 'numeric' }),
       h('label', { class: 'campo' }, 'Nota (opcional)', nota),
       h('div', { class: 'fila envuelve' }, boton('Cambiar cultivo', function () { cambiarCultivoUI(m, u); }), boton('Borrar muestra', function () {
         var np = m.puntos.length;

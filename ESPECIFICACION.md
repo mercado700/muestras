@@ -226,3 +226,57 @@ vistas: se guardan en lat/lon y se proyectan.
 a GMS, numeración de muestras, cada regla de «Revisar antes de salir»
 (incluido el precinto repetido), exportación CSV, y `lista.js` con un libro
 sintético.
+
+## Fase 2: puente con Gravi (contrato, 03-11-2026)
+
+Decidido con Nelson: **el ADT es uno por visita** (como en Gravi, que lo
+guarda en `inspectionFacts.numADT` y lo lleva a `zxnumadt` del encabezado).
+
+### Ida: `iCloud Drive/Gravi/Campo/visitas-de-campo.json` (lo escribe Gravi)
+
+```json
+{
+  "formato": "gravi-visitas-campo", "version": 1, "generado": "ISO",
+  "visitas": [
+    {
+      "id": "900173/general",            // <expediente>/<carpeta de visita de Gravi>
+      "expediente": "900173", "visita": "general",
+      "cliente": "…", "tipo": "no_anunciada", "tipoTexto": "No anunciada",
+      "modo": "individual",                // o "grupo"
+      "desde": "2026-10-23", "hasta": "2026-10-23",   // fechas de VISITA (no el periodo evaluado)
+      "numADT": "700001",                  // "" si aún no hay
+      "unidades": [
+        {"clave": "PRD 100974", "codigo": "PRD 100974", "productor": "", "finca": "FINCA EJEMPLO",
+         "hoja": "F-01", "cultivos": ["Banano"], "ha": 9.97, "estatus": "organico",
+         "adicion": null, "coord": null}
+      ]
+    }
+  ]
+}
+```
+- Solo unidades de **campo** incluidas en la visita (`inspectionFacts.campo`).
+- En **grupo**, una unidad por socio visitado con finca: `clave = "<PRD>|<socio>|<finca>"`,
+  `codigo` = PRD del grupo, `productor` = socio, `finca` = finca del socio.
+- `coord` opcional `{lat, lon}` solo para centrar el mapa.
+- Entran las visitas con `hasta >= hoy − 1 día`; las pasadas se caen.
+
+### Página
+- «Traer de Gravi»: importa ese archivo. Crea o actualiza visitas por `id`
+  (`origen: "gravi"`, `graviId`). Al actualizar: agrega unidades nuevas,
+  actualiza datos de las existentes (por `clave`), **nunca** borra unidades
+  que ya tienen muestras ni toca muestras/puntos/precintos; una unidad que
+  Gravi ya no trae y no tiene muestras se quita, con muestras se marca «ya no
+  está en Gravi».
+- Inicio = **agenda**: visitas ordenadas por fecha (Hoy, Mañana, fecha),
+  luego las pasadas/sin fecha.
+- **ADT por visita**: `visita.adt` (de Gravi `numADT` o tecleado una vez en
+  la Visita). Las muestras ya no llevan ADT. Migración de visitas guardadas:
+  si todas las muestras tienen el mismo ADT (o vacío), pasa a la visita; si
+  difieren, se toma el más repetido y «Revisar» avisa. «Revisar» exige ADT de
+  visita (error si falta).
+
+### Vuelta: el JSON exportado (formato `muestras-campo`, versión 2)
+Igual que la v1 más: `visita.origen`, `visita.graviId`, `visita.adt`, y en
+cada unidad `codigo` (PRD) y, en grupo, `productor`/`finca` del socio. Las
+muestras: `{id, clave, cultivo, numero, puntos[{n,lat,lon,alt,precision,hora}],
+precintos{laboratorio,cu,contramuestra}, nota}`. Gravi importa en Mapas.

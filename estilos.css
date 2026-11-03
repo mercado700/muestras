@@ -111,3 +111,7 @@ label.campo input, label.campo textarea { margin-top: 4px; font-weight: 400; }
 .avance { margin: 4px 0 8px; font-weight: 600; }
 button.chica { min-height: 44px; padding: 6px 12px; font-size: .92rem; }
 #aviso.error { background: #b3261e; color: #fff; font-weight: 700; pointer-events: auto; padding: 14px 18px; }
+
+.visita-ab { border: none; background: none; text-align: left; display: block; padding: 4px 0; min-height: 44px; color: var(--texto); font: inherit; }
+.insignia.gravi { background: none; color: var(--suave); font-weight: 400; }
+.indicadores { margin: 6px 0; }
