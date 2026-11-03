@@ -1,0 +1,16 @@
+{
+  "name": "Muestras de campo",
+  "short_name": "Muestras",
+  "description": "Marca los puntos de muestreo y los precintos en campo, sin señal.",
+  "lang": "es",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#f6f2ea",
+  "theme_color": "#2e7d5b",
+  "icons": [
+    {"src": "icono-192.png", "sizes": "192x192", "type": "image/png"},
+    {"src": "icono-512.png", "sizes": "512x512", "type": "image/png"},
+    {"src": "icono-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable"}
+  ]
+}
